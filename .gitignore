@@ -1,0 +1,8 @@
+# API token
+.env
+
+# MVSEP output stems and job state
+karaoke/
+
+# Audio: source tracks and generated karaoke files
+*.flac
