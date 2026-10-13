@@ -1,8 +1,13 @@
 # API token
 .env
 
-# MVSEP output stems and job state
-karaoke/
+# Python
+.venv/
+__pycache__/
+
+# State of an unfinished MVSEP job
+*.mvsep-job.json
 
 # Audio: source tracks and generated karaoke files
+audio/
 *.flac
