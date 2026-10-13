@@ -5,7 +5,7 @@ Writes <name>_karaoke.flac next to the input: the mix with only the lead vocals 
 and encoded as 48 kHz 16-bit FLAC.
 
 With --video it also writes <name>_karaoke.mkv, scrolling lyrics highlighted word by word
-over a plain colour with two FLAC audio tracks (karaoke and original), and <name>.lrc, the
+over moving colours from the song's cover art, with two FLAC audio tracks (karaoke and original), and <name>.lrc, the
 lyrics and timings it used. "--video vertical" writes <name>_karaoke_vertical.mkv instead,
 "--video both" writes both. Put the song before --video on the command line.
 

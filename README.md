@@ -32,7 +32,7 @@ uv run karaoke path/to/song.flac --video both
 
 Put the song before `--video`. This also writes:
 
-- `song_karaoke.mkv` (and/or `song_karaoke_vertical.mkv`): the lyrics as a scrolling column over a plain background, the row being sung held in the centre and filled word by word. H.264 video with two FLAC audio tracks: the karaoke track (default) and the original song, so a player can switch between them.
+- `song_karaoke.mkv` (and/or `song_karaoke_vertical.mkv`): the lyrics as a scrolling column, the row being sung held in the centre and filled word by word, with a glow on the word to sing now. Behind it the colours of the song's cover art turn slowly and swell with the bass (a song without cover art gets colours chosen from its title). H.264 video with two FLAC audio tracks: the karaoke track (default) and the original song, so a player can switch between them.
 - `song.lrc`: the lyrics and timings that were used.
 
 The first run downloads a speech recognition model (about 1.6 GB) that is used to time the words.

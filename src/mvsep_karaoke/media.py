@@ -30,6 +30,16 @@ def probe(path: Path) -> tuple[float, dict]:
     return float(info["format"]["duration"]), {key.lower(): value for key, value in tags.items()}
 
 
+def cover(path: Path, size: int) -> bytes | None:
+    """The cover art embedded in a song as size x size raw RGB pixels, softened; None if it has none."""
+    result = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-frames:v", "1",
+         "-vf", f"scale={size}:{size}:flags=area,gblur=sigma={size / 16}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True,
+    )
+    return result.stdout if result.returncode == 0 and len(result.stdout) == size * size * 3 else None
+
+
 def loudnorm(source: Path, measured: str, output: list[str]) -> dict:
     """Run ffmpeg's loudnorm filter over source and return the stats it reports."""
     filters = f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TRUE_PEAK}:{measured}print_format=json"
