@@ -80,7 +80,9 @@ There is no browser test in the repo. The page was checked by driving it with Pl
 
 ## Post-processing
 
-`normalize()` replaces the downloaded karaoke track with a 48 kHz 16-bit FLAC at -14 LUFS integrated, -1.0 dBTP ceiling. It is a two-pass `loudnorm`: pass one measures, pass two feeds the `measured_*` values back with `linear=true`. The target `LRA` is raised to at least the measured LRA, because loudnorm silently falls back to dynamic mode (which reshapes dynamics) when the target LRA is below the source's. It also falls back when the required gain would push the true peak over the ceiling. The mode used is printed.
+`normalize()` replaces the downloaded karaoke track with a 48 kHz 16-bit FLAC at -10 LUFS integrated, -1.0 dBTP ceiling (`TARGET_LUFS`, `TARGET_TRUE_PEAK` in `media.py`; both values were chosen by the user). It is a two-pass `loudnorm`: pass one measures, pass two feeds the `measured_*` values back with `linear=true`. The target `LRA` is raised to at least the measured LRA, because loudnorm silently falls back to dynamic mode (which reshapes dynamics) when the target LRA is below the source's. It also falls back when the required gain would push the true peak over the ceiling. The mode used is printed.
+
+At -10 LUFS that second fallback is the normal case: MVSEP's stems arrive around -11 to -13 LUFS with peaks near 0 dBFS, so they need gain and cannot stay under the ceiling linearly. On the test stem dynamic mode gave -10.2 LUFS (it undershoots), cut the loudness range from 9.6 to 5.1 LU, and measured -0.9 dBTP after the resample to 48 kHz. With the earlier -14 LUFS target every track was a plain gain cut in linear mode. If the squashed dynamics become a problem, the alternative is linear gain followed by a true-peak limiter instead of loudnorm.
 
 ## Video
 

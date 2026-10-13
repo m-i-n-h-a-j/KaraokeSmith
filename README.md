@@ -18,7 +18,7 @@ Copy `.env.example` to `.env` and put your token in it, or set the `MVSEP_API_TO
 uv run karaoke path/to/song.flac
 ```
 
-This writes `song_karaoke.flac` next to the input: a 48 kHz 16-bit FLAC, normalized to -14 LUFS with a -1.0 dBTP ceiling. If that file already exists it is reused; delete it to make a new one.
+This writes `song_karaoke.flac` next to the input: a 48 kHz 16-bit FLAC, normalized to -10 LUFS with a -1.0 dBTP ceiling. If that file already exists it is reused; delete it to make a new one.
 
 If a run is interrupted, run the same command again: it picks the unfinished job back up instead of uploading the song a second time.
 

@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-TARGET_LUFS = -14.0
+TARGET_LUFS = -10.0
 TARGET_TRUE_PEAK = -1.0  # dBTP
 
 
@@ -38,7 +38,7 @@ def loudnorm(source: Path, measured: str, output: list[str]) -> dict:
 
 
 def normalize(path: Path) -> None:
-    """Rewrite the FLAC at path as -14 LUFS / -1.0 dBTP, 48 kHz 16-bit (two-pass loudnorm)."""
+    """Rewrite the FLAC at path at TARGET_LUFS / TARGET_TRUE_PEAK, 48 kHz 16-bit (two-pass loudnorm)."""
     measured = loudnorm(path, "", ["-f", "null", "-"])
     # A target LRA below the measured one drops loudnorm out of linear mode, which changes dynamics.
     lra = min(50.0, max(7.0, float(measured["input_lra"])))

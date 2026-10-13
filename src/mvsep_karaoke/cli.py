@@ -1,7 +1,7 @@
 """Make a karaoke track, and optionally a karaoke lyrics video, from a song with the MVSEP API.
 
 Writes <name>_karaoke.flac next to the input: the mix with only the lead vocals removed
-(back vocals and instruments stay), loudness-normalized with ffmpeg to -14 LUFS / -1.0 dBTP
+(back vocals and instruments stay), loudness-normalized with ffmpeg to -10 LUFS / -1.0 dBTP
 and encoded as 48 kHz 16-bit FLAC.
 
 With --video it also writes <name>_karaoke.mkv, scrolling lyrics highlighted word by word
