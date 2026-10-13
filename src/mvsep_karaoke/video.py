@@ -342,7 +342,7 @@ def render(lines: list[Line], karaoke: Path, original: Path, duration: float, ta
              "-i", str(karaoke.resolve()), "-i", str(original.resolve()),
              "-filter_complex", backdrop(layout, duration, gain),
              "-map", "[video]", "-map", "1:a:0", "-map", "2:a:0",
-             "-c:v", "libx264", "-preset", "slow", "-crf", "26", "-pix_fmt", "yuv420p",
+             "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p",
              # The karaoke track is already the FLAC we want; the original is brought to the same format.
              "-c:a:0", "copy", "-c:a:1", "flac", "-ar:a:1", "48000", "-sample_fmt:a:1", "s16",
              "-metadata:s:a:0", "title=Karaoke", "-metadata:s:a:1", "title=Original",
