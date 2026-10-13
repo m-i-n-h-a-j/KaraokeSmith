@@ -30,7 +30,7 @@ The API token is read from `MVSEP_API_TOKEN`, falling back to a `.env` file in t
 - `lyrics.py`: LRC parsing and writing, LRCLIB lookup, and `align`, which turns lyric lines into word timings.
 - `transcribe.py`: faster-whisper on the isolated lead vocals, returning timed words.
 - `video.py`: builds an ASS subtitle script with karaoke tags and renders it with ffmpeg.
-- `sync.py` and `sync.html`: the hand-timing editor, a one-page app served on localhost.
+- `sync.py` and `sync_page/`: the hand-timing editor, a one-page app served on localhost.
 
 ### Outputs are the cache
 
@@ -52,9 +52,11 @@ Matching text-only lyrics needs the recognizer to hear the same words. When fewe
 
 ### Hand-timing editor
 
-`--sync` runs before the rest of the pipeline: `sync.edit` serves `sync.html` on a random localhost port, behind a random token in the path so other sites open in the browser cannot post to it, and blocks until the page's Close button (or Ctrl+C). The song is transcoded to WAV for the page, which loads it as a blob so seeking works without HTTP range support.
+`--sync` runs before the rest of the pipeline: `sync.edit` serves the files in `sync_page/` on a random localhost port, behind a random token in the path so other sites open in the browser cannot post to it, and blocks until the page's Close button (or Ctrl+C). The song is transcoded to WAV for the page, which loads it as a blob so seeking works without HTTP range support.
 
-All editing logic is in the page's script. The page has three steps (`step`): `line`, where a tap times a whole line and spreads its words by length with the same `SECONDS_PER_CHAR` estimate as `lyrics.place`; `word`, where a tap times one word and gives the rest of the line provisional times; and `review`, where taps are off and the column follows the song. The user asked for lines to stay the first step and words to come second. Every change pushes an undo snapshot. Save posts the rows to the server, which writes the `.lrc`. A row that is not fully timed is written without a timestamp: `parse_lrc` reads such a line back as untimed, the editor shows it as still to do, and the CLI leaves it out of the video.
+The page is `index.html` with `style.css` and seven scripts: `state.js` (constants, state and small helpers), `timing.js` (taps, cuts, undo, and the spread of a line's words by length), `lyrics.js` (the Edit lyrics box), `column.js` (the lyric column), `timeline.js` (the canvas and its dragging), `controls.js` (steps, buttons, keys, save and close) and `load.js` (reads the lyrics and the song, then starts the page). It was one 1,440-line file until the user asked for it to be split. The scripts are plain scripts, not modules, so everything in them is global: one file calls another without imports, and a test can reach all of it. Keep the order they have in `index.html`, because `controls.js` hands functions from the earlier files to the buttons while it loads and `load.js` starts the page. The server only answers for the files that are in the folder, looked up by name.
+
+All editing logic is in the page's scripts. The page has three steps (`step`): `line`, where a tap times a whole line and spreads its words by length with the same `SECONDS_PER_CHAR` estimate as `lyrics.place`; `word`, where a tap times one word and gives the rest of the line provisional times; and `review`, where taps are off and the column follows the song. The user asked for lines to stay the first step and words to come second. Every change pushes an undo snapshot. Save posts the rows to the server, which writes the `.lrc`. A row that is not fully timed is written without a timestamp: `parse_lrc` reads such a line back as untimed, the editor shows it as still to do, and the CLI leaves it out of the video.
 
 Each line has a `byWord` flag: its word times were set by hand, as opposed to estimated from its length. The `.lrc` has no place for that flag, since a saved line always carries word tags, so `recognise` works it out again on load: word times that are an even spread by length (within the file's centisecond rounding) were estimated. The same test catches lines the automatic pipeline could not match to the vocals, because `lyrics.place` spreads those with the same weights. A line's `end` is only set when the user chose it (Enter, or a dragged edge); null means it follows from the length and the next line, and is worked out again whenever a neighbour moves. A line tap on a `byWord` line shifts its words instead of estimating them again.
 

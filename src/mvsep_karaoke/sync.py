@@ -10,7 +10,8 @@ from pathlib import Path
 from . import lyrics
 from .media import run
 
-PAGE = Path(__file__).with_name("sync.html")
+PAGE = Path(__file__).with_name("sync_page")  # index.html with its stylesheet and scripts
+KINDS = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
 
 
 def to_rows(drafts: list[lyrics.Draft]) -> list[dict]:
@@ -53,6 +54,8 @@ def edit(song: Path, lrc: Path, drafts: list[lyrics.Draft], duration: float, tit
         audio = Path(folder) / "song.wav"
         run(["ffmpeg", "-v", "error", "-y", "-i", str(song), "-vn", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", str(audio)])
         state = {"title": title, "duration": duration, "file": lrc.name, "lines": to_rows(drafts)}
+        # The page's files are looked up by name, so a request cannot reach anything outside its folder.
+        files = {file.name: file for file in PAGE.iterdir() if file.suffix in KINDS}
 
         class Handler(BaseHTTPRequestHandler):
             def reply(self, status: int, body: bytes = b"", kind: str = "text/plain; charset=utf-8") -> None:
@@ -64,12 +67,15 @@ def edit(song: Path, lrc: Path, drafts: list[lyrics.Draft], duration: float, tit
                 self.wfile.write(body)
 
             def do_GET(self) -> None:
-                if self.path == f"/{token}/":
-                    self.reply(200, PAGE.read_bytes(), "text/html; charset=utf-8")
-                elif self.path == f"/{token}/state":
+                root, _, name = self.path.rpartition("/")
+                if root != f"/{token}":
+                    self.reply(404)
+                elif name == "state":
                     self.reply(200, json.dumps(state).encode(), "application/json")
-                elif self.path == f"/{token}/audio":
+                elif name == "audio":
                     self.reply(200, audio.read_bytes(), "audio/wav")
+                elif file := files.get(name or "index.html"):
+                    self.reply(200, file.read_bytes(), KINDS[file.suffix])
                 else:
                     self.reply(404)
 
