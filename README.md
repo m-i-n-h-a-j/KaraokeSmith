@@ -56,15 +56,29 @@ uv run karaoke path/to/song.flac --sync --video
 
 `--sync` opens an editor in your browser before anything else. It runs on your own machine; nothing is uploaded. When you save and close it, the command carries on and renders the video.
 
-- **Edit lyrics**: paste or type the lyrics, one line per row.
-- **Tap lines** (default): play the song and press `Space` at the start of each line. The words of the line are spread over it by their length.
-- **Tap words**: press `Space` at the start of each word instead.
-- `Enter` ends the last tapped line or word at that moment, for a pause before the next one.
-- `Backspace` undoes the last tap and rewinds a little. `P` plays and pauses, the arrow keys jump 3 seconds, `1` `2` `3` set the speed to 0.5x, 0.75x and 1x.
-- Click a line to rewind to it and tap again from there.
-- **-50 ms / +50 ms** move every timing, for when your taps are consistently late or early.
+Start with **Edit lyrics** if there are none yet: paste or type them, one line per row. Then work through the three steps at the top of the page. You can stop after any of them.
 
-Timed words turn gold as the song plays, the way they will in the video. **Save** writes `song.lrc`; lines you have not timed yet are kept in it without a time and left out of the video.
+1. **Lines**: play the song and press `Space` at the start of each line. The words of the line are spread over it by their length, which is already enough for a video.
+2. **Words**: press `Space` at the start of each word. Lines that only have the estimate from step 1 are shown with a dotted underline; a line loses it once you have tapped its words. Slowing the song down with `1` or `2` helps here.
+3. **Review**: taps are switched off and `Space` plays and pauses. The lyrics follow the song and fill the way they will in the video.
+
+Keys, in the first two steps:
+
+- `Space` taps. While the song is paused it starts the song instead.
+- `Enter` ends the last tapped line or word at that moment, for a pause before the next one.
+- `Backspace` (or `Ctrl+Z`) undoes the last change; after a tap it also rewinds a little.
+- `P` plays and pauses, the left and right arrows jump 3 seconds, `1` `2` `3` set the speed to 0.5x, 0.75x and 1x.
+- Click a line, or press the up and down arrows, to rewind to it and tap again from there. In the words step you can click a single word to start from it.
+
+The strip at the bottom is a timeline: the song's waveform moves under a fixed playhead, with the timed lines (step 1) or words (steps 2 and 3) as blocks above it.
+
+- Drag the edge of a block to move it. Two blocks that touch share the edge; hold `Shift` to move only the later one and open a gap.
+- In step 1, drag a block by its middle to slide the whole line.
+- Click a block to hear the song from its start. Click the waveform to jump there, or drag it to scrub. Scroll to zoom.
+
+**-50 ms / +50 ms** move every timing, for when your taps are consistently late or early. In **Edit lyrics**, rows you leave alone keep their timing even if you add or remove rows around them, and a row you only reword keeps its place in the song.
+
+**Save** (or `Ctrl+S`) writes `song.lrc`; lines you have not timed yet are kept in it without a time and left out of the video.
 
 ### Fixing lyrics or timing in the file
 
