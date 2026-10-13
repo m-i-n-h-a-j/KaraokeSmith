@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Karaoke lyrics sync</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; --bg: #101014; --panel: #1a1a22; --edge: #2c2c3a; --text: #fff; --dim: #8a8a96; --gold: #ffd700; }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+         font: 15px/1.4 "Segoe UI", system-ui, sans-serif; }
+  header, footer { background: var(--panel); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  header { border-bottom: 1px solid var(--edge); }
+  footer { border-top: 1px solid var(--edge); color: var(--dim); font-size: 13px; }
+  h1 { font-size: 17px; margin: 0 8px 0 0; }
+  button, select { background: #262633; color: var(--text); border: 1px solid var(--edge); border-radius: 6px;
+                   padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--dim); }
+  button.on { background: var(--gold); color: #111; border-color: var(--gold); }
+  button.main { background: var(--gold); color: #111; border-color: var(--gold); font-weight: 600; }
+  #seek { flex: 1 1 220px; accent-color: var(--gold); }
+  #clock { font-variant-numeric: tabular-nums; min-width: 128px; }
+  #status { margin-left: auto; color: var(--gold); }
+  kbd { background: #262633; border: 1px solid var(--edge); border-radius: 4px; padding: 1px 6px; color: var(--text); font: inherit; }
+  main { flex: 1; overflow-y: auto; padding: 35vh 16px; scroll-behavior: smooth; }
+  .line { display: flex; gap: 16px; align-items: baseline; justify-content: center; padding: 7px 12px; margin: 2px auto;
+          max-width: 1100px; border-radius: 8px; cursor: pointer; border-left: 4px solid transparent; }
+  .line:hover { background: #17171f; }
+  .line.target { background: #20202b; border-left-color: var(--gold); }
+  .stamp { flex: 0 0 76px; text-align: right; color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .words { flex: 0 1 auto; font-size: 26px; font-weight: 600; text-align: center; }
+  .word { color: var(--dim); }
+  .word.timed { color: var(--text); }
+  .word.sung { color: var(--gold); }
+  .word.active { background: linear-gradient(90deg, var(--gold) var(--fill, 0%), var(--text) var(--fill, 0%));
+                 -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .word.next { text-decoration: underline; text-decoration-color: var(--gold); text-underline-offset: 6px; }
+  #editor { display: none; flex: 1; flex-direction: column; gap: 10px; padding: 16px; max-width: 900px; width: 100%; margin: 0 auto; }
+  #editor textarea { flex: 1; background: var(--panel); color: var(--text); border: 1px solid var(--edge); border-radius: 8px;
+                     padding: 12px; font: 16px/1.5 "Segoe UI", system-ui, sans-serif; resize: none; }
+  body.editing main { display: none; }
+  body.editing #editor { display: flex; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Karaoke lyrics sync</h1>
+  <button id="play">Play</button>
+  <span id="clock">00:00.00 / 00:00.00</span>
+  <input id="seek" type="range" min="0" max="1" step="0.01" value="0">
+  <select id="speed" title="Playback speed">
+    <option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1" selected>1x</option>
+  </select>
+  <button id="byLine" class="on" title="Each tap times a whole line; its words are spread by length">Tap lines</button>
+  <button id="byWord" title="Each tap times one word">Tap words</button>
+  <button id="earlier" title="Move every timing 50 ms earlier">&minus;50 ms</button>
+  <button id="later" title="Move every timing 50 ms later">+50 ms</button>
+  <button id="clear" title="Remove the timing of the marked line and every line after it">Clear from here</button>
+  <button id="edit">Edit lyrics</button>
+  <button id="save" class="main">Save</button>
+  <button id="close">Close</button>
+</header>
+<main id="lines"></main>
+<section id="editor">
+  <div>One lyric line per row. Rows you do not change keep their timing.</div>
+  <textarea id="text" spellcheck="false" placeholder="Paste or type the lyrics here, one line per row"></textarea>
+  <div><button id="apply" class="main">Use these lyrics</button> <button id="cancel">Cancel</button></div>
+</section>
+<footer>
+  <span><kbd>Space</kbd> tap</span>
+  <span><kbd>Enter</kbd> end the last tap here (pause)</span>
+  <span><kbd>Backspace</kbd> undo</span>
+  <span><kbd>P</kbd> play / pause</span>
+  <span><kbd>&larr;</kbd> <kbd>&rarr;</kbd> 3 s</span>
+  <span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> speed</span>
+  <span>click a line to redo from it</span>
+  <span id="status"></span>
+</footer>
+<script>
+const base = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
+const SECONDS_PER_CHAR = 0.06;  // the same sung-length estimate the renderer uses
+const $ = id => document.getElementById(id);
+const audio = new Audio();
+let lines = [];        // [{start, end, byWord, words: [{text, start, end, cut}]}]
+let cursor = 0;        // line the next tap times
+let wordCursor = 0;    // word within it, when tapping words
+let mode = 'line';
+let undo = [];
+let dirty = false;
+let closeArmed = false;
+
+const clock = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}`;
+const weight = text => text.replace(/[^\p{L}\p{N}]/gu, '').length + 2;
+const say = message => { $('status').textContent = message; };
+
+function nextStart(index) {
+  for (let i = index + 1; i < lines.length; i++) if (lines[i].start != null) return lines[i].start;
+  return null;
+}
+
+// Time the words of a line from word `from` on, by length, up to the line's end or the next line.
+function spread(index, from = 0) {
+  const line = lines[index];
+  if (line.start == null) return;
+  const begin = from === 0 ? line.start : line.words[from].start;
+  const weights = line.words.slice(from).map(word => weight(word.text));
+  const total = weights.reduce((a, b) => a + b, 0);
+  const guess = SECONDS_PER_CHAR * total;
+  const ceiling = line.end ?? nextStart(index) ?? Infinity;
+  const length = line.end != null ? Math.max(0.05, line.end - begin)
+                                  : Math.max(0.5 * guess, Math.min(1.5 * guess, ceiling - begin));
+  let used = 0;
+  line.words.slice(from).forEach((word, k) => {
+    word.start = begin + length * used / total;
+    used += weights[k];
+    word.end = begin + length * used / total;
+    word.cut = false;
+  });
+}
+
+function remember() {
+  undo.push({state: JSON.stringify({lines, cursor, wordCursor}), time: audio.currentTime});
+  if (undo.length > 1000) undo.shift();
+  dirty = true;
+  closeArmed = false;
+  say('');
+}
+
+// A new line starts at `t`: the line before it cannot run past that.
+function closeLineBefore(t) {
+  const before = lines[cursor - 1];
+  if (!before || before.start == null) return;
+  if (!before.byWord && before.end == null) return spread(cursor - 1);
+  const last = before.words[before.words.length - 1];
+  if (!last.cut) last.end = Math.max(last.start + 0.02, Math.min(last.end, t));
+}
+
+function tap() {
+  if (cursor >= lines.length) return say('Every line is timed. Click a line to redo it.');
+  remember();
+  const t = audio.currentTime, line = lines[cursor];
+  if (mode === 'line') {
+    Object.assign(line, {start: t, end: null, byWord: false});
+    spread(cursor);
+    closeLineBefore(t);
+    cursor++;
+  } else {
+    if (wordCursor === 0) {
+      Object.assign(line, {start: t, end: null, byWord: true});
+      closeLineBefore(t);
+    } else if (!line.words[wordCursor - 1].cut) {
+      line.words[wordCursor - 1].end = t;
+    }
+    line.words[wordCursor].start = t;
+    spread(cursor, wordCursor);  // the words still to tap get a provisional time
+    if (++wordCursor >= line.words.length) { cursor++; wordCursor = 0; }
+  }
+  draw();
+}
+
+// End the last tapped line or word at the current time instead of at the next tap.
+function cut() {
+  const t = audio.currentTime;
+  const index = mode === 'word' && wordCursor > 0 ? cursor : cursor - 1;
+  const line = lines[index];
+  if (!line || line.start == null || t <= line.start) return;
+  remember();
+  if (mode === 'word' && wordCursor > 0) {
+    const word = line.words[wordCursor - 1];
+    if (t > word.start) Object.assign(word, {end: t, cut: true});
+  } else if (line.byWord) {
+    const last = line.words[line.words.length - 1];
+    if (t > last.start) Object.assign(last, {end: t, cut: true});
+  } else {
+    line.end = t;
+    spread(index);
+  }
+  draw();
+}
+
+function undoTap() {
+  const last = undo.pop();
+  if (!last) return;
+  ({lines, cursor, wordCursor} = JSON.parse(last.state));
+  audio.currentTime = Math.max(0, last.time - 1.5);
+  draw();
+}
+
+function select(index) {
+  cursor = index;
+  wordCursor = 0;
+  if (lines[index].start != null) audio.currentTime = Math.max(0, lines[index].start - 2);
+  draw();
+}
+
+function shiftAll(delta) {
+  remember();
+  const move = t => t == null ? t : Math.max(0, t + delta);
+  for (const line of lines) {
+    line.start = move(line.start);
+    line.end = move(line.end);
+    for (const word of line.words) { word.start = move(word.start); word.end = move(word.end); }
+  }
+  draw();
+}
+
+function clearFromHere() {
+  if (cursor >= lines.length) return;
+  remember();
+  for (const line of lines.slice(cursor)) {
+    Object.assign(line, {start: null, end: null, byWord: false});
+    for (const word of line.words) Object.assign(word, {start: null, end: null, cut: false});
+  }
+  wordCursor = 0;
+  draw();
+}
+
+function setMode(next) {
+  mode = next;
+  wordCursor = 0;
+  $('byLine').classList.toggle('on', mode === 'line');
+  $('byWord').classList.toggle('on', mode === 'word');
+  draw();
+}
+
+function openEditor() {
+  $('text').value = lines.map(line => line.words.map(word => word.text).join(' ')).join('\n');
+  document.body.classList.add('editing');
+  audio.pause();
+  $('text').focus();
+}
+
+function applyLyrics() {
+  remember();
+  const texts = $('text').value.split('\n').map(row => row.trim().replace(/\s+/g, ' ')).filter(Boolean);
+  lines = texts.map((text, index) => {
+    const old = lines[index];
+    if (old && old.words.map(word => word.text).join(' ') === text) return old;
+    return {start: null, end: null, byWord: false, words: text.split(' ').map(word => ({text: word, start: null, end: null, cut: false}))};
+  });
+  cursor = Math.max(0, lines.findIndex(line => line.start == null));
+  if (lines.every(line => line.start != null)) cursor = lines.length;
+  wordCursor = 0;
+  document.body.classList.remove('editing');
+  draw();
+}
+
+// Rebuild the lyric column. Cheap enough to do after every change.
+function draw() {
+  const box = $('lines');
+  box.replaceChildren(...lines.map((line, index) => {
+    const row = document.createElement('div');
+    row.className = 'line' + (index === cursor ? ' target' : '');
+    row.onclick = () => select(index);
+    const stamp = document.createElement('span');
+    stamp.className = 'stamp';
+    stamp.textContent = line.start == null ? '--:--.--' : clock(line.start);
+    const words = document.createElement('span');
+    words.className = 'words';
+    line.words.forEach((word, k) => {
+      const span = document.createElement('span');
+      span.className = 'word' + (word.start != null ? ' timed' : '') +
+                       (mode === 'word' && index === cursor && k === wordCursor ? ' next' : '');
+      span.textContent = word.text;
+      words.append(span, ' ');
+    });
+    row.append(stamp, words);
+    return row;
+  }));
+  const target = box.children[Math.min(cursor, lines.length - 1)];
+  if (target) target.scrollIntoView({block: 'center'});
+  paint();
+}
+
+// Show the fill as the renderer will: words turn gold as the playhead passes them.
+function paint() {
+  const t = audio.currentTime;
+  $('clock').textContent = `${clock(t)} / ${clock(audio.duration || 0)}`;
+  if (document.activeElement !== $('seek')) $('seek').value = t;
+  const rows = $('lines').children;
+  lines.forEach((line, index) => {
+    const spans = rows[index]?.querySelectorAll('.word');
+    if (!spans) return;
+    line.words.forEach((word, k) => {
+      const span = spans[k], timed = word.start != null;
+      const active = timed && t >= word.start && t < word.end;
+      span.classList.toggle('sung', timed && t >= word.end);
+      span.classList.toggle('active', active);
+      if (active) span.style.setProperty('--fill', `${100 * (t - word.start) / (word.end - word.start)}%`);
+    });
+  });
+}
+
+function frame() {
+  if (!audio.paused) paint();
+  requestAnimationFrame(frame);
+}
+
+async function save() {
+  const round = t => t == null ? null : Math.round(t * 1000) / 1000;
+  const rows = lines.map(line => ({
+    start: round(line.start), end: round(line.end),
+    words: line.words.map(word => ({text: word.text, start: round(word.start), end: round(word.end)})),
+  }));
+  const response = await fetch(base + 'save', {method: 'POST', body: JSON.stringify(rows)});
+  const untimed = lines.filter(line => line.start == null).length;
+  say(await response.text() + (response.ok && untimed ? `; ${untimed} lines still untimed` : ''));
+  if (response.ok) dirty = false;
+}
+
+async function closeEditor() {
+  if (dirty && !closeArmed) {
+    closeArmed = true;
+    return say('Unsaved changes. Press Close again to discard them, or Save first.');
+  }
+  await fetch(base + 'close', {method: 'POST'});
+  audio.pause();
+  document.body.innerHTML = '<p style="margin:auto;font-size:20px">Editor closed. Go back to the terminal.</p>';
+}
+
+function toggle() { audio.paused ? audio.play() : audio.pause(); }
+
+$('play').onclick = toggle;
+audio.onplay = audio.onpause = () => { $('play').textContent = audio.paused ? 'Play' : 'Pause'; paint(); };
+audio.onseeked = paint;
+$('seek').oninput = event => { audio.currentTime = Number(event.target.value); };
+$('speed').onchange = event => { audio.playbackRate = Number(event.target.value); event.target.blur(); };
+$('byLine').onclick = () => setMode('line');
+$('byWord').onclick = () => setMode('word');
+$('earlier').onclick = () => shiftAll(-0.05);
+$('later').onclick = () => shiftAll(0.05);
+$('clear').onclick = clearFromHere;
+$('edit').onclick = openEditor;
+$('apply').onclick = applyLyrics;
+$('cancel').onclick = () => document.body.classList.remove('editing');
+$('save').onclick = save;
+$('close').onclick = closeEditor;
+
+document.addEventListener('keydown', event => {
+  if (event.target.matches('textarea')) return;
+  if (event.ctrlKey && event.key.toLowerCase() === 's') { event.preventDefault(); return save(); }
+  if (event.ctrlKey || event.altKey || event.metaKey) return;
+  const keys = {
+    ' ': tap, Enter: cut, Backspace: undoTap, p: toggle, P: toggle,
+    ArrowLeft: () => { audio.currentTime = Math.max(0, audio.currentTime - 3); },
+    ArrowRight: () => { audio.currentTime = audio.currentTime + 3; },
+    1: () => setSpeed('0.5'), 2: () => setSpeed('0.75'), 3: () => setSpeed('1'),
+  };
+  const action = keys[event.key];
+  if (!action) return;
+  event.preventDefault();
+  if (event.target.matches('button, select, input')) event.target.blur();
+  action();
+});
+
+function setSpeed(value) {
+  $('speed').value = value;
+  audio.playbackRate = Number(value);
+}
+
+(async () => {
+  const state = await (await fetch(base + 'state')).json();
+  $('title').textContent = state.title;
+  document.title = `${state.title}: lyrics sync`;
+  $('seek').max = state.duration;
+  lines = state.lines.map(line => ({...line, byWord: line.words.every(word => word.start != null),
+                                    words: line.words.map(word => ({...word, cut: false}))}));
+  // A line that has a start but no word times (line-level lyrics) gets its words spread by length.
+  lines.forEach((line, index) => { if (line.start != null && !line.byWord) spread(index); });
+  const first = lines.findIndex(line => line.start == null);
+  cursor = first < 0 ? lines.length : first;
+  audio.src = URL.createObjectURL(await (await fetch(base + 'audio')).blob());
+  if (lines.length) draw(); else openEditor();
+  say(lines.length ? `${lines.filter(line => line.start == null).length} of ${lines.length} lines untimed` : 'Add the lyrics to begin');
+  frame();
+})();
+</script>
+</body>
+</html>

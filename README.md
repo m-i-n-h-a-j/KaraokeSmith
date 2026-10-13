@@ -46,9 +46,29 @@ The first of these that exists is used:
 3. [LRCLIB](https://lrclib.net), looked up by the song's title and artist tags.
 4. If nothing is found, whatever the speech recognition heard.
 
-### Fixing lyrics or timing
+If lyrics without timings cannot be matched to the vocals (a language the speech recognition does not handle, or incomplete lyrics), no video is made and you are told to time them by hand.
 
-Edit `song.lrc` and run the command again. Only the video is rendered again, which takes seconds.
+### Timing lyrics by hand
+
+```
+uv run karaoke path/to/song.flac --sync --video
+```
+
+`--sync` opens an editor in your browser before anything else. It runs on your own machine; nothing is uploaded. When you save and close it, the command carries on and renders the video.
+
+- **Edit lyrics**: paste or type the lyrics, one line per row.
+- **Tap lines** (default): play the song and press `Space` at the start of each line. The words of the line are spread over it by their length.
+- **Tap words**: press `Space` at the start of each word instead.
+- `Enter` ends the last tapped line or word at that moment, for a pause before the next one.
+- `Backspace` undoes the last tap and rewinds a little. `P` plays and pauses, the arrow keys jump 3 seconds, `1` `2` `3` set the speed to 0.5x, 0.75x and 1x.
+- Click a line to rewind to it and tap again from there.
+- **-50 ms / +50 ms** move every timing, for when your taps are consistently late or early.
+
+Timed words turn gold as the song plays, the way they will in the video. **Save** writes `song.lrc`; lines you have not timed yet are kept in it without a time and left out of the video.
+
+### Fixing lyrics or timing in the file
+
+You can also edit `song.lrc` in a text editor and run the command again. Only the video is rendered again.
 
 Each line starts with its time, and each word is preceded by the time it starts. A time with nothing after it marks where the word before it ends:
 

@@ -14,6 +14,11 @@ PAUSE = 0.4  # gaps longer than this between two words of a line are written to 
 
 LINE_TAG = re.compile(r"\[(\d+):(\d+(?:[.:]\d+)?)\]")
 WORD_TAG = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+METADATA = re.compile(r"^\[[^\]]*\]$")  # [ar:Artist], [offset:+100], [Chorus]: not lyrics
+
+
+class NoTiming(Exception):
+    """The lyrics could not be lined up with what was heard in the vocals."""
 
 
 @dataclass
@@ -70,17 +75,21 @@ def parse_words(body: str) -> Line | None:
 
 
 def parse_lrc(text: str) -> list[Draft]:
-    """Read LRC text. Lines may carry word tags (kept as they are) or only a line timestamp."""
+    """Read LRC text. A line may carry word tags (kept as they are), only a line timestamp, or
+    no timestamp at all, which means it has not been timed yet."""
     drafts = []
     for raw in text.splitlines():
         raw, starts = raw.strip(), []
         while match := LINE_TAG.match(raw):
             starts.append(seconds(*match.groups()))
             raw = raw[match.end():].lstrip()
+        if not starts and raw and not METADATA.match(raw):
+            drafts.append(Draft(raw))
         for start in starts:
             words = parse_words(raw)
             drafts.append(Draft(" ".join(word.text for word in words) if words else raw, start, words=words))
-    drafts.sort(key=lambda draft: draft.start)
+    if all(draft.start is not None for draft in drafts):
+        drafts.sort(key=lambda draft: draft.start)
     # A timestamp with no text only marks where the line before it ends.
     lines = []
     for draft in drafts:
@@ -88,7 +97,8 @@ def parse_lrc(text: str) -> list[Draft]:
             lines.append(draft)
         elif lines and lines[-1].end is None:
             lines[-1].end = draft.start
-    for line, following in zip(lines, lines[1:]):
+    timed = [line for line in lines if line.start is not None]
+    for line, following in zip(timed, timed[1:]):
         line.end = line.end if line.end is not None else following.start
     return lines
 
@@ -97,17 +107,18 @@ def parse_plain(text: str) -> list[Draft]:
     return [Draft(line.strip()) for line in text.splitlines() if line.strip()]
 
 
-def format_lrc(lines: list[Line]) -> str:
+def format_line(line: Line) -> str:
     """Enhanced LRC: each word is preceded by its start time; an empty tag marks where a word ends."""
-    rows = []
-    for line in lines:
-        parts = [f"[{stamp(line[0].start)}]"]
-        for word, following in zip(line, [*line[1:], None]):
-            parts.append(f"<{stamp(word.start)}> {word.text}")
-            if following is None or following.start - word.end > PAUSE:
-                parts.append(f"<{stamp(word.end)}>")
-        rows.append(" ".join(parts))
-    return "\n".join(rows) + "\n"
+    parts = [f"[{stamp(line[0].start)}]"]
+    for word, following in zip(line, [*line[1:], None]):
+        parts.append(f"<{stamp(word.start)}> {word.text}")
+        if following is None or following.start - word.end > PAUSE:
+            parts.append(f"<{stamp(word.end)}>")
+    return " ".join(parts)
+
+
+def format_lrc(lines: list[Line]) -> str:
+    return "\n".join(format_line(line) for line in lines) + "\n"
 
 
 def search_lrclib(params: dict) -> list[dict]:
@@ -203,6 +214,9 @@ def align(drafts: list[Draft], heard: list[Word], duration: float) -> list[Line]
         texts = [text for draft in pending for text in draft.text.split()]
         pairs = match([norm(text) for text in texts], [norm(word.text) for word in heard])
         matched = len(pairs)
+        if matched < 0.3 * wanted:
+            # With no line timestamps to fall back on, the result would be lyrics smeared blindly over the song.
+            raise NoTiming(f"only {matched} of {wanted} lyric words were recognised in the vocals")
         words = place(texts, {index: heard[position] for index, position in pairs.items()}, None, 0.0, duration)
         for draft in pending:
             count = len(draft.text.split())

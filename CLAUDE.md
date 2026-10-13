@@ -13,10 +13,11 @@ uv run karaoke audio/song.opus                    # writes audio/song_karaoke.fl
 uv run karaoke audio/song.opus --video            # also audio/song.lrc and audio/song_karaoke.mkv
 uv run karaoke audio/song.opus --video vertical   # audio/song_karaoke_vertical.mkv instead
 uv run karaoke audio/song.opus --video both
+uv run karaoke audio/song.opus --sync --video     # time the lyrics by hand in the browser first
 uv add <package>                                  # add a dependency (updates pyproject.toml and uv.lock)
 ```
 
-The CLI is deliberately minimal: one positional input and `--video [horizontal|vertical|both]`. Because `--video` takes an optional value, the song must come before it. Model, formats, loudness targets, colours and encoder settings are module constants, not flags. The user's way to customise lyrics and timing is the `.lrc`/`.txt` file next to the song, not options.
+The CLI is deliberately minimal: one positional input, `--video [horizontal|vertical|both]` and `--sync`. Because `--video` takes an optional value, the song must come before it. Model, formats, loudness targets, colours and encoder settings are module constants, not flags. The user's way to customise lyrics and timing is the `.lrc`/`.txt` file next to the song, not options.
 
 The API token is read from `MVSEP_API_TOKEN`, falling back to a `.env` file in the current working directory, so run from the repo root or export the variable. `ffmpeg` and `ffprobe` must be on PATH.
 
@@ -29,6 +30,7 @@ The API token is read from `MVSEP_API_TOKEN`, falling back to a `.env` file in t
 - `lyrics.py`: LRC parsing and writing, LRCLIB lookup, and `align`, which turns lyric lines into word timings.
 - `transcribe.py`: faster-whisper on the isolated lead vocals, returning timed words.
 - `video.py`: builds an ASS subtitle script with karaoke tags and renders it with ffmpeg.
+- `sync.py` and `sync.html`: the hand-timing editor, a one-page app served on localhost.
 
 ### Outputs are the cache
 
@@ -45,6 +47,16 @@ Right after a job is created, the create response is written as `<input name>.<k
 Databases only have line timings, so word timings come from transcribing the lead vocals and matching the heard words to the lyric words (`align`). With line timestamps, each line is matched only against words heard inside its own time window, which stops a repeated chorus from latching onto the wrong repetition; without them the whole song is matched at once. Words that were not heard are spread between their matched neighbours in proportion to their length. If there are no lyrics at all, the transcription itself becomes the lyrics.
 
 The result is written to `<name>.lrc` in enhanced LRC (`[mm:ss.xx] <mm:ss.xx> word ...`; an empty word tag marks where the previous word ends). A user-supplied line-level `.lrc` is rewritten in place with word tags added.
+
+Matching text-only lyrics needs the recognizer to hear the same words. When fewer than 30% match and there are no line timestamps to fall back on, `align` raises `NoTiming` instead of smearing the lyrics over the song; the CLI then saves the text as an untimed `.lrc` and tells the user to run `--sync`. This happens with languages Whisper handles badly (the Malayalam/English track this project started with matched 0 of 77 words).
+
+### Hand-timing editor
+
+`--sync` runs before the rest of the pipeline: `sync.edit` serves `sync.html` on a random localhost port, behind a random token in the path so other sites open in the browser cannot post to it, and blocks until the page's Close button (or Ctrl+C). The song is transcoded to WAV for the page, which loads it as a blob so seeking works without HTTP range support.
+
+All editing logic is in the page's script: taps read `audio.currentTime`, a line tap spreads the line's words by length with the same `SECONDS_PER_CHAR` estimate as `lyrics.place`, a word tap times one word and gives the rest of the line provisional times, and every change pushes an undo snapshot. Save posts the rows to the server, which writes the `.lrc`. A row that is not fully timed is written without a timestamp: `parse_lrc` reads such a line back as untimed, the editor shows it as still to do, and the CLI leaves it out of the video.
+
+There is no browser test in the repo. The page was checked by driving it with Playwright against installed Chrome (`uv run --no-project --with playwright ...`, `chromium.launch(channel="chrome")`); its functions and state (`tap()`, `lines`, `cursor`) are globals, so they can be inspected with `page.evaluate`. Setting `BROWSER` to something like `cmd /c echo %s` stops `--sync` from opening a real browser window during such a test.
 
 ## MVSEP API facts not obvious from the docs
 
