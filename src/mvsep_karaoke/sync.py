@@ -1,6 +1,7 @@
 """Local browser editor for typing in lyrics and tapping their timing by hand."""
 import json
 import secrets
+import shutil
 import tempfile
 import threading
 import webbrowser
@@ -104,6 +105,11 @@ def edit(song: Path, lrc: Path, drafts: list[lyrics.Draft], duration: float, tit
         url = f"http://127.0.0.1:{server.server_address[1]}/{token}/"
         print(f"lyrics editor: {url}\nSave there, then press Close in the page (or Ctrl+C here) to go on.", flush=True)
         if open_browser:
+            if shutil.which("termux-open-url"):
+                try:
+                    webbrowser.register("termux-open-url", None, webbrowser.GenericBrowser("termux-open-url"), preferred=True)
+                except Exception:
+                    pass
             webbrowser.open(url)
         try:
             server.serve_forever()

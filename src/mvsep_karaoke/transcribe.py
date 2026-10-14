@@ -12,8 +12,15 @@ MODEL = "turbo"
 
 def transcribe(vocals: Path) -> list[Line]:
     """Transcribe vocals into phrases of timed words."""
-    import numpy
-    from faster_whisper import WhisperModel  # slow to import, so only when a transcription is needed
+    try:
+        import numpy
+        from faster_whisper import WhisperModel  # slow to import, so only when a transcription is needed
+    except ImportError as e:
+        sys.exit(
+            f"Speech transcription (faster-whisper) is not available on this platform: {e}\n"
+            f"Please time the lyrics manually with '--sync' (opens the in-browser editor)\n"
+            f"or provide a timed .lrc file next to the song."
+        )
 
     # Decoded here rather than by faster-whisper, whose own decoder breaks with current PyAV.
     decoded = subprocess.run(
