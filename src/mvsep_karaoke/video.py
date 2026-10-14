@@ -11,7 +11,13 @@ from pathlib import Path
 from .lyrics import Line
 from .media import cover, run
 
-FPS = 60
+FPS = 24  # the default; --fps sets another
+# Video encoders by the name --codec takes: the pixel format the picture is made in, and the
+# ffmpeg options. FFV1 is lossless, for archiving or editing further, and many times larger.
+CODECS = {
+    "avc": ("yuv420p", ["-c:v", "libx264", "-preset", "slow", "-crf", "20"]),
+    "ffv1": ("yuv420p10le", ["-c:v", "ffv1", "-level", "3", "-g", "1", "-slices", "16", "-slicecrc", "1"]),
+}
 FONT = "Segoe UI"
 SUNG, PLAIN = "00D7FF", "FFFFFF"  # ASS colours are BBGGRR: gold, white
 SCROLL = 0.35  # seconds one scroll step takes
@@ -22,7 +28,7 @@ COUNT_IN = 3.0  # seconds of count-in dots
 POP = 105  # percent of its size a row swells to as it lands in the centre
 GLOW_FADE = 450  # milliseconds a word's glow takes to die away once the word is over
 
-# The backdrop is all blur, so it is worked out small and at half the frame rate, then blown up.
+# The backdrop is all blur, so it is worked out small and at no more than BACKDROP_FPS, then blown up.
 SHRINK, BACKDROP_FPS = 6, 30
 COVER = 64  # pixels a side the cover art is cut down to before it is blurred into the backdrop
 PEAK, MEAN = 0.36, 0.18  # brightest spot and average the backdrop is held to, so lyrics stay readable
@@ -298,13 +304,14 @@ def artwork(song: Path, title: str) -> tuple[bytes, float]:
     return b"P6 %d %d 255\n" % (COVER, COVER) + pixels, gain
 
 
-def backdrop(layout: Layout, duration: float, gain: float) -> str:
-    """The ffmpeg filter graph for the picture: input 0 (the artwork) as slowly turning blurs of
-    colour that swell with the bass of input 1 (the karaoke track), then the lyrics on top."""
+def backdrop(layout: Layout, duration: float, gain: float, rate: int, fps: int, pix_fmt: str) -> str:
+    """The ffmpeg filter graph for the picture: input 0 (the artwork, at `rate` frames a second)
+    as slowly turning blurs of colour that swell with the bass of input 1 (the karaoke track),
+    then the lyrics on top, at `fps` frames a second in `pix_fmt`."""
     across, down = layout.width // SHRINK, layout.height // SHRINK
     side = ceil(hypot(across, down) / 2) * 2  # a square that covers the small frame at any angle
     loud = gain * (1 + BEAT)
-    fall = 0.001 ** (1 / BACKDROP_FPS)  # the pulse dies away within a second
+    fall = 0.001 ** (1 / rate)  # the pulse dies away within a second
     return (
         # Two copies of the artwork turn opposite ways and are blurred into each other.
         f"[0:v]scale={side}:{side}:flags=bicubic,format=gbrp,split[near][far];"
@@ -316,19 +323,21 @@ def backdrop(layout: Layout, duration: float, gain: float) -> str:
         # the average of that drawing is how loud it is. lagfun lets the level fall off slowly.
         # The colours are set to their brightest above, and silence multiplies them back down.
         f"[1:a]aformat=sample_rates=48000:channel_layouts=mono,lowpass=f=150,"
-        f"showwaves=s=200x100:mode=cline:rate={BACKDROP_FPS}:scale=lin:draw=full:colors=white,format=gray,"
+        f"showwaves=s=200x100:mode=cline:rate={rate}:scale=lin:draw=full:colors=white,format=gray,"
         f"scale=1:1:flags=area,lagfun=decay={fall:.3f},lut=c0=(255+{BEAT}*val)/{1 + BEAT},"
         f"scale={across}:{down}:flags=neighbor,format=gbrp[beat];"
         f"[colours][beat]blend=all_mode=multiply,hue=s=1.4,"
-        f"vignette=a=PI/5,scale={layout.width}:{layout.height}:flags=bicubic,fps={FPS},format=yuv420p,"
+        f"vignette=a=PI/5,scale={layout.width}:{layout.height}:flags=bicubic,fps={fps},format={pix_fmt},"
         f"ass=lyrics.ass,fade=t=in:d=0.5,fade=t=out:st={duration - 1:.3f}:d=1[video]"
     )
 
 
 def render(lines: list[Line], karaoke: Path, original: Path, duration: float, target: Path,
-           layout: Layout, title: str = "", artist: str = "") -> None:
+           layout: Layout, title: str = "", artist: str = "", codec: str = "avc", fps: int = FPS) -> None:
     """Encode the lyrics over the backdrop as an MKV with two FLAC audio tracks:
     the karaoke track (default) and the original song."""
+    pix_fmt, encoder = CODECS[codec]
+    rate = min(BACKDROP_FPS, fps)
     with tempfile.TemporaryDirectory() as folder:
         # A Windows path inside an ffmpeg filter needs layers of escaping, so the subtitle
         # file gets a plain name and ffmpeg runs from its folder instead.
@@ -338,11 +347,14 @@ def render(lines: list[Line], karaoke: Path, original: Path, duration: float, ta
         (Path(folder) / "cover.ppm").write_bytes(picture)
         run(
             ["ffmpeg", "-hide_banner", "-nostats", "-y",
-             "-loop", "1", "-framerate", str(BACKDROP_FPS), "-t", f"{duration:.3f}", "-i", "cover.ppm",
+             "-loop", "1", "-framerate", str(rate), "-t", f"{duration:.3f}", "-i", "cover.ppm",
              "-i", str(karaoke.resolve()), "-i", str(original.resolve()),
-             "-filter_complex", backdrop(layout, duration, gain),
-             "-map", "[video]", "-map", "1:a:0", "-map", "2:a:0",
-             "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p",
+             # The karaoke track again, for the copy: one input feeding both the filter and the
+             # copy stalls while the encoder holds back frames, and ffmpeg runs out of memory.
+             "-i", str(karaoke.resolve()),
+             "-filter_complex", backdrop(layout, duration, gain, rate, fps, pix_fmt),
+             "-map", "[video]", "-map", "3:a:0", "-map", "2:a:0",
+             *encoder, "-pix_fmt", pix_fmt,
              # The karaoke track is already the FLAC we want; the original is brought to the same format.
              "-c:a:0", "copy", "-c:a:1", "flac", "-ar:a:1", "48000", "-sample_fmt:a:1", "s16",
              "-metadata:s:a:0", "title=Karaoke", "-metadata:s:a:1", "title=Original",
