@@ -13,10 +13,11 @@ from .media import cover, run
 
 FPS = 24  # the default; --fps sets another
 # Video encoders by the name --codec takes: the pixel format the picture is made in, and the
-# ffmpeg options. FFV1 is lossless, for archiving or editing further, and many times larger.
+# ffmpeg options. FFV1 is lossless, for archiving or editing further, and many times larger. It
+# keeps full colour resolution: 4:2:0 halves it, which leaves dark fringes around gold lyrics.
 CODECS = {
     "avc": ("yuv420p", ["-c:v", "libx264", "-preset", "slow", "-crf", "20"]),
-    "ffv1": ("yuv420p10le", ["-c:v", "ffv1", "-level", "3", "-g", "1", "-slices", "16", "-slicecrc", "1"]),
+    "ffv1": ("yuv444p10le", ["-c:v", "ffv1", "-level", "3", "-g", "1", "-slices", "16", "-slicecrc", "1"]),
 }
 FONT = "Segoe UI"
 SUNG, PLAIN = "00D7FF", "FFFFFF"  # ASS colours are BBGGRR: gold, white
@@ -304,6 +305,14 @@ def artwork(song: Path, title: str) -> tuple[bytes, float]:
     return b"P6 %d %d 255\n" % (COVER, COVER) + pixels, gain
 
 
+def saturate(amount: float) -> str:
+    """colorchannelmixer options that multiply saturation by `amount`, around BT.601 luma as
+    ffmpeg's hue filter does."""
+    luma = {"r": 0.299, "g": 0.587, "b": 0.114}
+    return ":".join(f"{out}{src}={(1 - amount) * weight + amount * (out == src):.4f}"
+                    for out in luma for src, weight in luma.items())
+
+
 def backdrop(layout: Layout, duration: float, gain: float, rate: int, fps: int, pix_fmt: str) -> str:
     """The ffmpeg filter graph for the picture: input 0 (the artwork, at `rate` frames a second)
     as slowly turning blurs of colour that swell with the bass of input 1 (the karaoke track),
@@ -312,23 +321,35 @@ def backdrop(layout: Layout, duration: float, gain: float, rate: int, fps: int, 
     side = ceil(hypot(across, down) / 2) * 2  # a square that covers the small frame at any angle
     loud = gain * (1 + BEAT)
     fall = 0.001 ** (1 / rate)  # the pulse dies away within a second
+    # The vignette, made as two still pictures because ffmpeg's vignette filter only works in 8 bits.
+    # One multiplies the colours by `fade` and also by `loud`, which sets them to their brightest.
+    # The other darkens them a little more towards the corners, by up to 16/219 of full scale,
+    # which is what that filter does on the limited-range YUV it was once given.
+    fade = "cos(PI/5*sqrt((X-W/2)^2+(Y-H/2)^2)/sqrt((W/2)^2+(H/2)^2))^4"
+    still = f"color=s={across}x{down}:r=1:d=1,format=gbrpf32le,geq=r={{0}}:g={{0}}:b={{0}}"
     return (
-        # Two copies of the artwork turn opposite ways and are blurred into each other.
+        # Two copies of the artwork turn opposite ways and are blurred into each other. From the
+        # blur on, the colours are floating point: in 8 bits the gain and saturation magnify the
+        # rounding steps, and scaling up SHRINK times turns those steps into visible blotches.
         f"[0:v]scale={side}:{side}:flags=bicubic,format=gbrp,split[near][far];"
         f"[near]rotate=a=t*0.07:ow={across}:oh={down}[near];"
         f"[far]scale={side * 3 // 2}:-1,rotate=a=2-t*0.045:ow={across}:oh={down}[far];"
-        f"[near][far]blend=all_mode=average,gblur=sigma={across / 50:.1f},"
-        f"lutrgb=r=val*{loud:.3f}:g=val*{loud:.3f}:b=val*{loud:.3f}[colours];"
+        f"[near][far]blend=all_mode=average,format=gbrpf32le,gblur=sigma={across / 50:.1f},"
+        f"colorchannelmixer={saturate(1.4)}[colours];"
         # The bass as one grey level per frame: its waveform is drawn as bars from the middle, so
         # the average of that drawing is how loud it is. lagfun lets the level fall off slowly.
-        # The colours are set to their brightest above, and silence multiplies them back down.
+        # The vignette sets the colours to their brightest, and silence multiplies them back down.
         f"[1:a]aformat=sample_rates=48000:channel_layouts=mono,lowpass=f=150,"
         f"showwaves=s=200x100:mode=cline:rate={rate}:scale=lin:draw=full:colors=white,format=gray,"
         f"scale=1:1:flags=area,lagfun=decay={fall:.3f},lut=c0=(255+{BEAT}*val)/{1 + BEAT},"
-        f"scale={across}:{down}:flags=neighbor,format=gbrp[beat];"
-        f"[colours][beat]blend=all_mode=multiply,hue=s=1.4,"
-        f"vignette=a=PI/5,scale={layout.width}:{layout.height}:flags=bicubic,fps={fps},format={pix_fmt},"
-        f"ass=lyrics.ass,fade=t=in:d=0.5,fade=t=out:st={duration - 1:.3f}:d=1[video]"
+        f"scale={across}:{down}:flags=neighbor,format=gbrpf32le[beat];"
+        f"{still.format(f'{loud:.3f}*{fade}')}[shade];{still.format(f'(1-{fade})*16/219')}[dark];"
+        f"[colours][beat]blend=all_mode=multiply[lit];[lit][shade]blend=all_mode=multiply[lit];"
+        f"[lit][dark]blend=all_mode=subtract,"
+        # showwaves ends its stream hours after its last frame, even for a few seconds of audio,
+        # and fps pads the gap with copies until ffmpeg runs out of memory. trim stops it.
+        f"scale={layout.width}:{layout.height}:flags=bicubic,fps={fps},trim=duration={duration:.3f},"
+        f"format={pix_fmt},ass=lyrics.ass,fade=t=in:d=0.5,fade=t=out:st={duration - 1:.3f}:d=1[video]"
     )
 
 
