@@ -68,6 +68,7 @@ PlayResX: {layout.width}
 PlayResY: {layout.height}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -349,7 +350,13 @@ def backdrop(layout: Layout, duration: float, gain: float, rate: int, fps: int, 
         # showwaves ends its stream hours after its last frame, even for a few seconds of audio,
         # and fps pads the gap with copies until ffmpeg runs out of memory. trim stops it.
         f"scale={layout.width}:{layout.height}:flags=bicubic,fps={fps},trim=duration={duration:.3f},"
-        f"format={pix_fmt},ass=lyrics.ass,fade=t=in:d=0.5,fade=t=out:st={duration - 1:.3f}:d=1[video]"
+        # BT.709 limited range, what players assume for HD video; the scale above converts to it, and
+        # the ass filter uses it for the lyric colours because the script's header names it (without
+        # that line the filter uses BT.601, as VSFilter does). The encoder takes its colour tags
+        # from the frames and ignores -color_primaries and -color_trc, so setparams adds those two.
+        f"format=pix_fmts={pix_fmt}:color_spaces=bt709:color_ranges=tv,"
+        f"setparams=color_primaries=bt709:color_trc=bt709,"
+        f"ass=lyrics.ass,fade=t=in:d=0.5,fade=t=out:st={duration - 1:.3f}:d=1[video]"
     )
 
 
