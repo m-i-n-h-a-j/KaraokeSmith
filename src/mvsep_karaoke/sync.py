@@ -11,7 +11,7 @@ from pathlib import Path
 from . import lyrics
 from .media import run
 
-PAGE = Path(__file__).with_name("sync_page")  # index.html with its stylesheet and scripts
+PAGE = Path(__file__).with_name("sync_page")  # the editor page, built from sync_ui/ with Vite
 KINDS = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
 
 

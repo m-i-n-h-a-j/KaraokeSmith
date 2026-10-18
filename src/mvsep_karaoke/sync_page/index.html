@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Karaoke lyrics sync</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="style.css" />
+    <script type="module" crossorigin src="./editor.js"></script>
+    <link rel="stylesheet" crossorigin href="./editor.css">
   </head>
   <body data-step="line">
     <header>
@@ -22,6 +23,7 @@
         Save
       </button>
       <button id="close">Close</button>
+      <span class="break"></span>
     </header>
     <nav>
       <span class="steps">
@@ -39,20 +41,30 @@
         </button>
       </span>
       <span id="hint"></span>
-      <button id="earlier" title="Move every timing 50 ms earlier">
-        &minus;50 ms
-      </button>
-      <button id="later" title="Move every timing 50 ms later">+50 ms</button>
-      <button
-        id="clear"
-        title="Remove the timing of the marked line and every line after it"
-      >
-        Clear from here
-      </button>
-      <button id="edit">Edit lyrics</button>
+      <button id="more" title="More actions">&ctdot;</button>
+      <span id="extras">
+        <button id="earlier" title="Move every timing 50 ms earlier">
+          &minus;50 ms
+        </button>
+        <button id="later" title="Move every timing 50 ms later">+50 ms</button>
+        <button
+          id="clear"
+          title="Remove the timing of the marked line and every line after it"
+        >
+          Clear from here
+        </button>
+        <button id="edit">Edit lyrics</button>
+      </span>
     </nav>
     <main id="lines"></main>
     <canvas id="timeline"></canvas>
+    <section id="pad">
+      <button id="back" title="Back 3 s">&minus;3 s</button>
+      <button id="undo">Undo</button>
+      <button id="end">End <small id="endWhat"></small></button>
+      <button id="toggle">Play</button>
+      <button id="tap" class="main">Tap <small id="tapWhat"></small></button>
+    </section>
     <section id="editor">
       <div>
         One lyric line per row. Rows you do not change keep their timing; a row
@@ -70,18 +82,11 @@
     </section>
     <footer>
       <span id="keys"></span>
-      <span
+      <span id="mouse"
         >timeline: drag an edge to move it (<kbd>Shift</kbd> parts two words),
         drag the wave to scrub, scroll to zoom</span
       >
       <span id="status"></span>
     </footer>
-    <script src="state.js"></script>
-    <script src="timing.js"></script>
-    <script src="lyrics.js"></script>
-    <script src="column.js"></script>
-    <script src="timeline.js"></script>
-    <script src="controls.js"></script>
-    <script src="load.js"></script>
   </body>
 </html>

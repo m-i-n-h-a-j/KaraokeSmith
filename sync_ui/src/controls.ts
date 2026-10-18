@@ -1,14 +1,26 @@
 // The steps, the buttons and the keyboard, and saving and closing.
+import { draw, paint } from "./column";
+import { applyLyrics, openEditor } from "./lyrics";
+import { $, STEPS, audio, base, say, state, type Step } from "./state";
+import {
+  clearFromHere,
+  cut,
+  move,
+  shiftAll,
+  tap,
+  todo,
+  undoLast,
+} from "./timing";
 
-function setStep(next) {
-  step = next;
-  cursor = todo();
-  wordCursor = 0;
-  document.body.dataset.step = step;
+export function setStep(next: Step) {
+  state.step = next;
+  state.cursor = todo();
+  state.wordCursor = 0;
+  document.body.dataset.step = next;
   for (const [name, { button }] of Object.entries(STEPS))
-    $(button).classList.toggle("on", name === step);
-  $("hint").textContent = STEPS[step].hint;
-  const { space, enter } = STEPS[step];
+    $(button).classList.toggle("on", name === next);
+  $("hint").textContent = STEPS[next].hint;
+  const { space, enter } = STEPS[next];
   const keys = [
     ["Space", space],
     ...(enter ? [["Enter", enter]] : []),
@@ -30,15 +42,30 @@ function setStep(next) {
       return item;
     }),
   );
-  const line = lines[cursor];
-  if (step !== "review" && line?.start != null)
+  labelPad();
+  const line = state.lines[state.cursor];
+  if (next !== "review" && line?.start != null)
     audio.currentTime = Math.max(0, line.start - 2);
   draw();
 }
 
-async function save() {
-  const round = (t) => (t == null ? null : Math.round(t * 1000) / 1000);
-  const rows = lines.map((line) => ({
+// The touch pad's labels say what Tap and End do now. Tap works like Space: while the song
+// stands still, it starts the song instead.
+function labelPad() {
+  const { space, enter } = STEPS[state.step];
+  $("toggle").textContent = $("play").textContent = audio.paused
+    ? "Play"
+    : "Pause";
+  $("tapWhat").textContent =
+    audio.paused && state.step !== "review" ? "plays the song" : space;
+  $("endWhat").textContent = enter ?? "";
+  $<HTMLButtonElement>("end").disabled = !enter;
+}
+
+export async function save() {
+  const round = (t: number | null) =>
+    t == null ? null : Math.round(t * 1000) / 1000;
+  const rows = state.lines.map((line) => ({
     start: round(line.start),
     end: round(line.end),
     words: line.words.map((word) => ({
@@ -51,48 +78,55 @@ async function save() {
     method: "POST",
     body: JSON.stringify(rows),
   });
-  const untimed = lines.filter((line) => line.start == null).length;
+  const untimed = state.lines.filter((line) => line.start == null).length;
   say(
     (await response.text()) +
       (response.ok && untimed ? `; ${untimed} lines still untimed` : ""),
   );
   if (response.ok) {
-    dirty = false;
+    state.dirty = false;
     $("save").classList.remove("unsaved");
   }
 }
 
-async function closeEditor() {
-  if (dirty && !closeArmed) {
-    closeArmed = true;
+export async function closeEditor() {
+  if (state.dirty && !state.closeArmed) {
+    state.closeArmed = true;
     return say(
       "Unsaved changes. Press Close again to discard them, or Save first.",
     );
   }
   await fetch(base + "close", { method: "POST" });
   audio.pause();
-  closed = true;
-  dirty = false;
+  state.closed = true;
+  state.dirty = false;
   document.body.innerHTML =
     '<p style="margin:auto;font-size:20px">Editor closed. Go back to the terminal.</p>';
 }
 
-function toggle() {
-  audio.paused ? audio.play() : audio.pause();
+export function toggle() {
+  if (audio.paused) audio.play();
+  else audio.pause();
+}
+
+function setSpeed(value: string) {
+  $<HTMLSelectElement>("speed").value = value;
+  audio.playbackRate = Number(value);
 }
 
 $("play").onclick = toggle;
 audio.onplay = audio.onpause = () => {
-  $("play").textContent = audio.paused ? "Play" : "Pause";
+  labelPad();
   paint();
 };
 audio.onseeked = paint;
-$("seek").oninput = (event) => {
-  audio.currentTime = Number(event.target.value);
+$<HTMLInputElement>("seek").oninput = (event) => {
+  audio.currentTime = Number((event.target as HTMLInputElement).value);
 };
-$("speed").onchange = (event) => {
-  audio.playbackRate = Number(event.target.value);
-  event.target.blur();
+$<HTMLSelectElement>("speed").onchange = (event) => {
+  const speed = event.target as HTMLSelectElement;
+  audio.playbackRate = Number(speed.value);
+  speed.blur();
 };
 $("byLine").onclick = () => setStep("line");
 $("byWord").onclick = () => setStep("word");
@@ -105,12 +139,33 @@ $("apply").onclick = applyLyrics;
 $("cancel").onclick = () => document.body.classList.remove("editing");
 $("save").onclick = save;
 $("close").onclick = closeEditor;
+$("more").onclick = () => document.body.classList.toggle("more");
+document.addEventListener("click", (event) => {
+  // The menu closes on any press, except the one that opened it.
+  if (!(event.target as Element).closest("#more"))
+    document.body.classList.remove("more");
+});
+
+// Tap and End act as the finger lands, as a key does, not when it lifts. Starting the song waits
+// for the click, because browsers only let a page start sound once the finger lifts.
+$("tap").onpointerdown = () => {
+  if (state.step !== "review" && !audio.paused) tap();
+};
+$("tap").onclick = () => {
+  if (state.step === "review" || audio.paused) toggle();
+};
+$("end").onpointerdown = cut;
+$("undo").onclick = undoLast;
+$("toggle").onclick = toggle;
+$("back").onclick = () => {
+  audio.currentTime = Math.max(0, audio.currentTime - 3);
+};
 addEventListener("beforeunload", (event) => {
-  if (dirty) event.preventDefault();
+  if (state.dirty) event.preventDefault();
 });
 
 document.addEventListener("keydown", (event) => {
-  if (closed) return;
+  if (state.closed) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (document.body.classList.contains("editing")) {
     if (key === "Escape") $("cancel").click();
@@ -125,7 +180,7 @@ document.addEventListener("keydown", (event) => {
     return undoLast();
   }
   if (event.ctrlKey || event.altKey || event.metaKey) return;
-  const keys = {
+  const keys: Record<string, () => void> = {
     // A tap while the song stands still would time nothing useful, so there Space starts it.
     " ": () => (audio.paused ? audio.play() : tap()),
     Enter: cut,
@@ -147,11 +202,7 @@ document.addEventListener("keydown", (event) => {
   if (!action) return;
   event.preventDefault();
   if (event.repeat && (key === " " || key === "Enter")) return; // a held key is one tap
-  if (event.target.matches("button, select, input")) event.target.blur();
+  const target = event.target as HTMLElement;
+  if (target.matches("button, select, input")) target.blur();
   action();
 });
-
-function setSpeed(value) {
-  $("speed").value = value;
-  audio.playbackRate = Number(value);
-}

@@ -1,51 +1,113 @@
 // The timeline: the waveform under a fixed playhead, and the blocks along its top that can be dragged.
+import { draw, marked, refresh } from "./column";
+import {
+  JOIN,
+  LANE,
+  MIN,
+  PEAKS,
+  RULER,
+  audio,
+  canvas,
+  clamp,
+  clock,
+  done,
+  lineEnd,
+  pen,
+  place,
+  say,
+  state,
+  textOf,
+  timeAt,
+  view,
+} from "./state";
+import { remember, shift, spread } from "./timing";
+
+// A block on the timeline: a whole line (`k` is null) or one of its words.
+interface Span {
+  index: number;
+  k: number | null;
+  start: number;
+  end: number;
+  text: string;
+  soft: boolean; // the line's word times are still an estimate
+  minEnd: number;
+  maxStart: number;
+}
+
+interface Edge {
+  at: number; // index into spans()
+  edge: "start" | "end";
+  time: number;
+  joint: boolean; // shared with the end of the span before
+  distance?: number;
+}
+
+// A pointer held down on the timeline.
+interface Drag {
+  x: number;
+  edge: Edge | null;
+  at: number;
+  moved: boolean;
+  from: number;
+  playing: boolean;
+  line: boolean;
+  grab: number;
+}
+
+let cache: Span[] | null = null; // spans(), until something changes
+let drag: Drag | null = null;
+
+export function forget() {
+  cache = null;
+}
 
 // What the timeline shows and lets you drag: whole lines in the lines step, single words after
 // it. `minEnd` and `maxStart` are how far the edges may be pushed together. The outer edges of
 // an estimated line stretch the whole estimate, so there they leave room for all of its words.
-function spans() {
+export function spans() {
   if (cache) return cache;
-  cache = [];
-  lines.forEach((line, index) => {
+  const list: Span[] = [];
+  state.lines.forEach((line, index) => {
     if (line.start == null) return;
     const words = line.words,
       last = words.length - 1,
       room = 2 * MIN * words.length,
       soft = !done(line);
-    if (step === "line") {
-      cache.push({
+    if (state.step === "line") {
+      list.push({
         index,
         k: null,
         start: line.start,
-        end: words[last].end,
+        end: words[last].end!,
         text: textOf(line),
         soft,
-        minEnd: line.byWord ? words[last].start + MIN : line.start + room,
-        maxStart: line.byWord ? words[0].end - MIN : words[last].end - room,
+        minEnd: line.byWord ? words[last].start! + MIN : line.start + room,
+        maxStart: line.byWord ? words[0].end! - MIN : words[last].end! - room,
       });
     } else {
       words.forEach((word, k) =>
-        cache.push({
+        list.push({
           index,
           k,
-          start: word.start,
-          end: word.end,
+          start: word.start!,
+          end: word.end!,
           text: word.text,
           soft,
           minEnd:
-            !line.byWord && k === last ? line.start + room : word.start + MIN,
+            !line.byWord && k === last ? line.start! + room : word.start! + MIN,
           maxStart:
-            !line.byWord && k === 0 ? words[last].end - room : word.end - MIN,
+            !line.byWord && k === 0 ? words[last].end! - room : word.end! - MIN,
         }),
       );
     }
   });
-  return cache;
+  cache = list;
+  return list;
 }
 
 // Draw the timeline: the song's waveform scrolling under a fixed playhead, with the timed lines
 // or words as blocks along the top.
-function sketch() {
+export function sketch() {
   const width = canvas.clientWidth,
     height = canvas.clientHeight,
     ratio = devicePixelRatio || 1;
@@ -59,9 +121,10 @@ function sketch() {
   }
   pen.setTransform(ratio, 0, 0, ratio, 0, 0);
   pen.clearRect(0, 0, width, height);
+  const { peaks, duration } = state;
   const t = audio.currentTime,
     head = view.lead * width;
-  const x = (time) => head + (time - t) * view.scale;
+  const x = (time: number) => head + (time - t) * view.scale;
   const from = t - head / view.scale,
     to = from + width / view.scale;
   const bottom = height - RULER,
@@ -73,7 +136,7 @@ function sketch() {
     const stride = Math.max(1, Math.floor(PEAKS / view.scale));
     const first = Math.max(0, Math.floor((from * PEAKS) / stride) * stride),
       last = Math.min(peaks.length - 1, Math.ceil(to * PEAKS));
-    const outline = [];
+    const outline: [number, number][] = [];
     for (let i = first; i <= last; i += stride) {
       let level = 0;
       for (let j = i; j < i + stride && j < peaks.length; j++)
@@ -109,7 +172,10 @@ function sketch() {
     const left = x(span.start),
       wide = Math.max(1, x(span.end) - left);
     const mine = span.index === marked,
-      next = step === "word" && span.index === cursor && span.k === wordCursor;
+      next =
+        state.step === "word" &&
+        span.index === state.cursor &&
+        span.k === state.wordCursor;
     // Each edge runs down through the waveform, to line it up with what is heard there.
     pen.fillStyle = mine
       ? "rgba(255, 215, 0, 0.5)"
@@ -156,17 +222,17 @@ function sketch() {
   pen.fillRect(head - 1, 0, 2, height);
 }
 
-// The draggable edge under the pointer, if any. Words that touch share one edge, held at the
-// start of the later one; where an end and a start sit in the same spot without touching, the
-// side the pointer is on tells them apart.
-function edgeAt(x, y) {
+// The draggable edge under the pointer, if any, within `reach` pixels. Words that touch share one
+// edge, held at the start of the later one; where an end and a start sit in the same spot without
+// touching, the side the pointer is on tells them apart.
+function edgeAt(x: number, y: number, reach = 6) {
   if (y > LANE) return null;
   const list = spans();
-  let best = null;
-  list.forEach((span, at) => {
+  let best: Edge | null = null;
+  for (const [at, span] of list.entries()) {
     const before = list[at - 1],
       after = list[at + 1];
-    const edges = [
+    const edges: Edge[] = [
       {
         at,
         edge: "start",
@@ -180,14 +246,14 @@ function edgeAt(x, y) {
       const off = x - place(edge.time);
       const distance =
         Math.abs(off) + ((edge.edge === "start" ? off < 0 : off > 0) ? 0.5 : 0);
-      if (Math.abs(off) <= 6 && (!best || distance < best.distance))
+      if (Math.abs(off) <= reach && (!best || distance < best.distance!))
         best = { ...edge, distance };
     }
-  });
+  }
   return best;
 }
 
-function spanAt(x, y) {
+function spanAt(x: number, y: number) {
   return y > LANE
     ? -1
     : spans().findIndex(
@@ -196,8 +262,8 @@ function spanAt(x, y) {
 }
 
 // The outer edge of an estimated line stretches the estimate; any other edge pins a word by hand.
-function setStart({ index, k }, t) {
-  const line = lines[index];
+function setStart({ index, k }: Span, t: number) {
+  const line = state.lines[index];
   if (!line.byWord && !k) {
     line.end = lineEnd(line);
     line.start = t;
@@ -208,8 +274,8 @@ function setStart({ index, k }, t) {
   if (!k) line.start = t;
 }
 
-function setEnd({ index, k }, t) {
-  const line = lines[index],
+function setEnd({ index, k }: Span, t: number) {
+  const line = state.lines[index],
     last = line.words.length - 1;
   if (!line.byWord && (k ?? last) === last) {
     line.end = t;
@@ -220,7 +286,7 @@ function setEnd({ index, k }, t) {
   if ((k ?? last) === last) line.end = t;
 }
 
-function moveEdge({ at, edge, joint }, t) {
+function moveEdge({ at, edge, joint }: Edge, t: number) {
   const list = spans(),
     span = list[at],
     before = list[at - 1],
@@ -237,7 +303,7 @@ function moveEdge({ at, edge, joint }, t) {
     t = clamp(
       t,
       span.minEnd,
-      Math.max(span.end, after ? after.start : duration),
+      Math.max(span.end, after ? after.start : state.duration),
     );
     setEnd(span, t);
   }
@@ -245,7 +311,7 @@ function moveEdge({ at, edge, joint }, t) {
 }
 
 // Slide a whole line along the song, between the lines around it.
-function moveLine(at, start) {
+function moveLine(at: number, start: number) {
   const list = spans(),
     span = list[at],
     before = list[at - 1],
@@ -253,22 +319,39 @@ function moveLine(at, start) {
   const low = Math.min(span.start, before ? before.end : 0);
   const high = Math.max(
     span.start,
-    (after ? after.start : duration) - (span.end - span.start),
+    (after ? after.start : state.duration) - (span.end - span.start),
   );
-  const line = lines[span.index];
+  const line = state.lines[span.index];
   line.end = span.end;
   shift(line, clamp(start, low, high) - span.start);
-  say(clock(line.start));
+  say(clock(line.start!));
 }
 
-const spot = (event) => {
+const spot = (event: PointerEvent) => {
   const box = canvas.getBoundingClientRect();
   return [event.clientX - box.left, event.clientY - box.top];
 };
 
+const fingers = new Map<number, number>(); // pointers held down on the timeline: their x, by pointer id
+let pinch: { apart: number; scale: number } | null = null; // two fingers zoom: how far apart they started, and the scale then
+const apart = () => {
+  const [a, b] = fingers.values();
+  return Math.max(20, Math.abs(a - b));
+};
+
 canvas.onpointerdown = (event) => {
   const [x, y] = spot(event);
-  const edge = edgeAt(x, y),
+  fingers.set(event.pointerId, x);
+  canvas.setPointerCapture(event.pointerId);
+  if (fingers.size > 1) {
+    // A second finger zooms, and whatever the first one was dragging stays where it got to.
+    if (drag?.moved && (drag.edge || drag.line)) draw();
+    drag = null;
+    pinch = fingers.size === 2 ? { apart: apart(), scale: view.scale } : null;
+    return;
+  }
+  // A fingertip is wider than a mouse pointer, so edges can be caught from further away.
+  const edge = edgeAt(x, y, event.pointerType === "touch" ? 16 : 6),
     at = edge ? -1 : spanAt(x, y);
   if (edge && event.shiftKey) edge.joint = false;
   drag = {
@@ -278,20 +361,30 @@ canvas.onpointerdown = (event) => {
     moved: false,
     from: audio.currentTime,
     playing: !audio.paused,
-    line: at >= 0 && step === "line",
-    grab: at >= 0 ? timeAt(x) - spans()[at].start : 0,
+    line: at >= 0 && state.step === "line",
+    // Where the pointer is on what it holds, so an edge caught from a few pixels away does not jump.
+    grab: edge
+      ? timeAt(x) - edge.time
+      : at >= 0
+        ? timeAt(x) - spans()[at].start
+        : 0,
   };
-  canvas.setPointerCapture(event.pointerId);
 };
 
 canvas.onpointermove = (event) => {
   const [x, y] = spot(event);
+  if (fingers.has(event.pointerId)) fingers.set(event.pointerId, x);
+  if (pinch) {
+    view.scale = clamp((pinch.scale * apart()) / pinch.apart, 40, 800);
+    return sketch();
+  }
+  if (fingers.size > 1) return;
   if (!drag) {
     canvas.style.cursor = edgeAt(x, y)
       ? "ew-resize"
       : spanAt(x, y) < 0
         ? "default"
-        : step === "line"
+        : state.step === "line"
           ? "grab"
           : "pointer";
     return;
@@ -302,18 +395,20 @@ canvas.onpointermove = (event) => {
     audio.pause();
     if (drag.edge || drag.line) remember();
   }
-  if (drag.edge) moveEdge(drag.edge, timeAt(x));
+  if (drag.edge) moveEdge(drag.edge, timeAt(x) - drag.grab);
   else if (drag.line) moveLine(drag.at, timeAt(x) - drag.grab);
   else
     audio.currentTime = clamp(
       drag.from - (x - drag.x) / view.scale,
       0,
-      duration,
+      state.duration,
     ); // the wave follows the pointer
   refresh();
 };
 
 canvas.onpointerup = (event) => {
+  fingers.delete(event.pointerId);
+  if (fingers.size < 2) pinch = null;
   if (!drag) return;
   const { moved, edge, at, line, playing } = drag;
   drag = null;
@@ -321,13 +416,15 @@ canvas.onpointerup = (event) => {
     audio.currentTime = clamp(
       at >= 0 ? spans()[at].start : timeAt(spot(event)[0]),
       0,
-      duration,
+      state.duration,
     );
   else if (edge || line) draw();
   else if (playing) audio.play();
 };
 
-canvas.onpointercancel = () => {
+canvas.onpointercancel = (event) => {
+  fingers.delete(event.pointerId);
+  if (fingers.size < 2) pinch = null;
   if (drag?.moved) draw();
   drag = null;
 };

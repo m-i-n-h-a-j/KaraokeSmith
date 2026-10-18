@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Karaoke lyrics sync</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body data-step="line">
+    <header>
+      <h1 id="title">Karaoke lyrics sync</h1>
+      <button id="play">Play</button>
+      <span id="clock">00:00.00 / 00:00.00</span>
+      <input id="seek" type="range" min="0" max="1" step="0.01" value="0" />
+      <select id="speed" title="Playback speed">
+        <option value="0.5">0.5x</option>
+        <option value="0.75">0.75x</option>
+        <option value="1" selected>1x</option>
+      </select>
+      <button id="save" class="main" title="Write the .lrc file (Ctrl+S)">
+        Save
+      </button>
+      <button id="close">Close</button>
+      <span class="break"></span>
+    </header>
+    <nav>
+      <span class="steps">
+        <button
+          id="byLine"
+          title="Each tap times a whole line; its words are spread over it by length"
+        >
+          1 Lines <small id="lineCount"></small>
+        </button>
+        <button id="byWord" title="Each tap times one word">
+          2 Words <small id="wordCount"></small>
+        </button>
+        <button id="review" title="Play the result back; taps are off">
+          3 Review
+        </button>
+      </span>
+      <span id="hint"></span>
+      <button id="more" title="More actions">&ctdot;</button>
+      <span id="extras">
+        <button id="earlier" title="Move every timing 50 ms earlier">
+          &minus;50 ms
+        </button>
+        <button id="later" title="Move every timing 50 ms later">+50 ms</button>
+        <button
+          id="clear"
+          title="Remove the timing of the marked line and every line after it"
+        >
+          Clear from here
+        </button>
+        <button id="edit">Edit lyrics</button>
+      </span>
+    </nav>
+    <main id="lines"></main>
+    <canvas id="timeline"></canvas>
+    <section id="pad">
+      <button id="back" title="Back 3 s">&minus;3 s</button>
+      <button id="undo">Undo</button>
+      <button id="end">End <small id="endWhat"></small></button>
+      <button id="toggle">Play</button>
+      <button id="tap" class="main">Tap <small id="tapWhat"></small></button>
+    </section>
+    <section id="editor">
+      <div>
+        One lyric line per row. Rows you do not change keep their timing; a row
+        you only reword keeps its place in the song.
+      </div>
+      <textarea
+        id="text"
+        spellcheck="false"
+        placeholder="Paste or type the lyrics here, one line per row"
+      ></textarea>
+      <div>
+        <button id="apply" class="main">Use these lyrics</button>
+        <button id="cancel">Cancel</button>
+      </div>
+    </section>
+    <footer>
+      <span id="keys"></span>
+      <span id="mouse"
+        >timeline: drag an edge to move it (<kbd>Shift</kbd> parts two words),
+        drag the wave to scrub, scroll to zoom</span
+      >
+      <span id="status"></span>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
