@@ -20,10 +20,13 @@ from .media import cover, run
 
 FPS = 24  # the default; --fps sets another
 # Video encoders by the name --codec takes: the pixel format the picture is made in, and the
-# ffmpeg options. FFV1 is lossless, for archiving or editing further, and many times larger. It
-# keeps full colour resolution: 4:2:0 halves it, which leaves dark fringes around gold lyrics.
+# ffmpeg options. HEVC is 10-bit 4:2:0 (Main 10), which players and TVs decode in hardware; its
+# CRF of 22 is meant to look like H.264 at 20 in a smaller file, and was not compared by eye.
+# FFV1 is lossless, for archiving or editing further, and many times larger. It keeps full
+# colour resolution: 4:2:0 halves it, which leaves dark fringes around gold lyrics.
 CODECS = {
     "avc": ("yuv420p", ["-c:v", "libx264", "-preset", "slow", "-crf", "20"]),
+    "hevc": ("yuv420p10le", ["-c:v", "libx265", "-preset", "medium", "-crf", "22"]),
     "ffv1": ("yuv444p10le", ["-c:v", "ffv1", "-level", "3", "-g", "1", "-slices", "16", "-slicecrc", "1"]),
 }
 # The lyrics' typeface ships with the package, so every machine renders the same: Bricolage

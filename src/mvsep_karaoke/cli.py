@@ -8,8 +8,8 @@ With --video it also writes <name>_karaoke.mkv, scrolling lyrics highlighted wor
 over moving colours from the song's cover art, with two FLAC audio tracks (karaoke and original), and <name>.lrc, the
 lyrics and timings it used. "--video vertical" writes <name>_karaoke_vertical.mkv instead,
 "--video both" writes both. Put the song before --video on the command line. The video is
-H.264 at 24 frames a second; --codec ffv1 makes it lossless 10-bit FFV1 instead (many times
-larger) and --fps sets another frame rate.
+H.264 at 24 frames a second; --codec hevc makes it 10-bit H.265, --codec ffv1 lossless 10-bit
+FFV1 (many times larger), and --fps sets another frame rate.
 
 Lyrics come from <name>.lrc (timed) or <name>.txt (text only) next to the song if you put
 one there, otherwise from LRCLIB, looked up by the song's tags. --sync opens an editor in
@@ -86,7 +86,8 @@ def main() -> None:
                         help="also make a karaoke lyrics video: horizontal 1920x1080 (the default), "
                              "vertical 1080x1920, or both")
     parser.add_argument("--codec", choices=list(video.CODECS), default="avc",
-                        help="video codec: avc (H.264, the default) or ffv1 (lossless, 10-bit, much larger)")
+                        help="video codec: avc (H.264, the default), hevc (H.265, 10-bit) "
+                             "or ffv1 (lossless, 10-bit, much larger)")
     parser.add_argument("--fps", type=int, default=video.FPS,
                         help=f"video frame rate (default {video.FPS})")
     parser.add_argument("--sync", action="store_true",
