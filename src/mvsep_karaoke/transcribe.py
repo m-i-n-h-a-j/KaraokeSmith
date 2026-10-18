@@ -1,9 +1,10 @@
-"""Word timings heard in isolated vocals, via faster-whisper."""
+"""Word timings heard in the isolated vocals (or with --skip-separation, the whole song), via faster-whisper."""
 import subprocess
 import sys
 from pathlib import Path
 
 from .lyrics import Line, Word
+from .progress import Progress
 
 # "small" skipped the first half-minute of a rap verse that "turbo" caught; turbo takes about
 # 0.4x real time on a laptop CPU and downloads about 1.6 GB on first use.
@@ -29,11 +30,14 @@ def transcribe(vocals: Path) -> list[Line]:
     )
     if decoded.returncode != 0:
         sys.exit(f"ffmpeg failed on {vocals}:\n{decoded.stderr.decode(errors='replace')[-800:]}")
-    print(f"transcribing vocals with faster-whisper {MODEL} (CPU)", flush=True)
+    print(f"transcribing {vocals.name} with faster-whisper {MODEL} (CPU)", flush=True)
     model = WhisperModel(MODEL, device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(
-        numpy.frombuffer(decoded.stdout, dtype=numpy.float32),
-        word_timestamps=True, vad_filter=True, condition_on_previous_text=False,
-    )
-    phrases = [[Word(word.word.strip(), word.start, word.end) for word in segment.words] for segment in segments]
-    return [phrase for phrase in phrases if phrase]
+    samples = numpy.frombuffer(decoded.stdout, dtype=numpy.float32)
+    segments, _ = model.transcribe(samples, word_timestamps=True, vad_filter=True, condition_on_previous_text=False)
+    meter, phrases = Progress("transcribing", len(samples) / 16000), []
+    for segment in segments:  # worked out one by one as the loop asks for them
+        phrases.append([Word(word.word.strip(), word.start, word.end) for word in segment.words])
+        meter.update(segment.end)
+    phrases = [phrase for phrase in phrases if phrase]
+    meter.close(f"transcribing: heard {sum(map(len, phrases))} words in {meter.elapsed()}")
+    return phrases
