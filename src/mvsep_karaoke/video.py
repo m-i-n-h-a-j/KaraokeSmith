@@ -576,7 +576,9 @@ def render(lines: list[Line], karaoke: Path | None, original: Path, duration: fl
         if BACKDROP == "aurora":
             across, down = layout.width // SHRINK, layout.height // SHRINK
             sound = aurora.listen(music, rate)
-            print(f"backdrop: aurora, reacting to {len(sound.beats)} beats found in {music.name}", flush=True)
+            moments = ", ".join(f"{int(at // 60)}:{at % 60:04.1f}" for at, _ in sound.drops)
+            print(f"backdrop: aurora, bursting at {len(sound.drops)} beat drops found in {music.name}"
+                  + (f": {moments}" if moments else "; the ribbons only flow"), flush=True)
             frames = aurora.frames(across, down, duration, rate, aurora.palette(pixels), sound)
             inputs = ["-f", "rawvideo", "-pix_fmt", "gbrpf32le", "-s", f"{across}x{down}", "-framerate", str(rate),
                       "-i", "-", "-i", str(original.resolve())]

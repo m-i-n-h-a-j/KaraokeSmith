@@ -1,6 +1,6 @@
 """The aurora backdrop: ribbons of the cover's colours flowing across a dark sky, drawn here frame
-by frame and piped into ffmpeg. The flow runs faster in loud passages, and every beat makes the
-ribbons swell, light up and lurch forward; the sky itself never brightens."""
+by frame and piped into ffmpeg. The flow runs faster in loud passages, and the ribbons burst at
+each beat drop, where the beat comes back hard after a quieter stretch; the sky never brightens."""
 import colorsys
 import subprocess
 from dataclasses import dataclass
@@ -10,51 +10,95 @@ import numpy as np
 
 SPEED = 0.08  # how fast the ribbons flow in silence
 DRIVE = 0.35  # how much loudness speeds the flow up
-SURGE = 0.12  # how far the flow lurches forward on each beat
-SWELL = 0.35  # how much wider a ribbon gets on a beat
-LIGHT = 0.6  # how much brighter a ribbon gets on a beat
-ATTACK, FADE = 0.03, 0.22  # seconds a beat takes to come on, and to die away
+SURGE = 0.6  # how far the flow lurches forward at a drop
+SWELL = 0.6  # how much wider the ribbons get at a drop
+LIGHT = 1.0  # how much brighter the ribbons get at a drop
+ATTACK, FADE = 0.04, 0.6  # seconds a drop's burst takes to come on, and its time constant dying away
 GLOW = 0.62  # overall brightness, which keeps the lyrics readable
 SHADE = 0.38  # how much darker the band behind the lyrics is
 RATE = 48000
+HOP, SPAN = 240, 1024  # the prescan looks at the bass every 5 ms, through a 21 ms window
+DROP_RISE = 2.0  # a drop's bass is at least this many times as strong as in the 4 s before it
+DROP_GAP = 8.0  # seconds between drops at the least
 
 
 @dataclass
 class Sound:
     """What the backdrop follows: for each backdrop frame, the loudness of the whole mix (slowly
-    smoothed, 0 to 1) added up over the song so far, in seconds; and the times of the beats."""
+    smoothed, 0 to 1) added up over the song so far, in seconds; and each beat drop's time and
+    strength (0.5 to 1)."""
     loudness: np.ndarray
-    beats: np.ndarray
+    drops: list[tuple[float, float]]
 
 
-def decode(path, filters: str) -> np.ndarray:
+def decode(path, filters: str = "anull") -> np.ndarray:
     out = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-af", filters, "-ac", "1", "-ar", str(RATE),
                           "-f", "f32le", "-"], capture_output=True, check=True).stdout
     return np.frombuffer(out, np.float32)
 
 
+def find_drops(mix: np.ndarray, bass: np.ndarray) -> list[tuple[float, float]]:
+    """The beat drops in a track, scanned ahead of the render: onsets of the kick (rises in the
+    30-150 Hz band, every 5 ms) where the bass over the next 2 s is loud for this song and at least
+    DROP_RISE times what it was over the 4 s before. Each is then moved back to where its bass
+    starts to rise: the band's onsets fire halfway up the attack, about 0.1 s late on a soft 808."""
+    count = 1 + (len(mix) - SPAN) // HOP
+    if count < 1000:
+        return []
+    window = np.hanning(SPAN).astype(np.float32)
+    low = (np.fft.rfftfreq(SPAN, 1 / RATE) >= 30) & (np.fft.rfftfreq(SPAN, 1 / RATE) <= 150)
+    frames = np.lib.stride_tricks.sliding_window_view(mix, SPAN)
+    flux, level, last = np.zeros(count, np.float32), np.zeros(count, np.float32), None
+    for start in range(0, count, 4096):  # in blocks, to keep the memory down
+        rows = np.arange(start, min(count, start + 4096))
+        magnitude = np.abs(np.fft.rfft(frames[rows * HOP] * window, axis=1))[:, low]
+        level[rows] = np.sqrt((magnitude ** 2).mean(1))
+        heard = np.log1p(100 * magnitude)
+        flux[rows] = np.maximum(0, heard - np.vstack([heard[:1] if last is None else last, heard[:-1]])).sum(1)
+        last = heard[-1:]
+    times = (np.arange(count) * HOP + SPAN / 2) / RATE
+    near = np.lib.stride_tricks.sliding_window_view(np.pad(flux, 20, mode="edge"), 41).max(1)  # 0.1 s either side
+    usual = np.median(np.lib.stride_tricks.sliding_window_view(np.pad(flux, 100, mode="edge"), 201), axis=1)
+    onsets = np.where((flux >= near) & (flux > usual + 0.5 * flux.std()))[0]
+    energy = np.convolve(level, np.ones(50) / 50, mode="same")  # over 0.25 s
+    loud = np.percentile(energy, 90)
+    found = []
+    for i in onsets:
+        if i < 140 or i + 400 > count:  # a beat that starts the song still counts, 0.7 s in or later
+            continue
+        before, after = energy[max(0, i - 800):i - 40].mean(), energy[i:i + 400].mean()
+        rise = after / (before + 0.02 * loud)
+        if after > 0.55 * loud and rise > DROP_RISE:
+            found.append((times[i], rise))
+    drops = []
+    for at, rise in sorted(found, key=lambda drop: -drop[1]):  # the strongest of each stretch
+        if all(abs(at - kept) > DROP_GAP for kept, _ in drops):
+            drops.append((at, rise))
+    envelope = np.convolve(np.abs(bass), np.ones(48) / 48, mode="same")  # 1 ms
+    refined = []
+    for at, rise in sorted(drops):
+        s, back = int(at * RATE), int(0.15 * RATE)
+        calm = np.median(envelope[max(0, s - int(0.4 * RATE)):max(1, s - back)])
+        top = envelope[s:s + int(0.1 * RATE)].max()
+        search = envelope[max(0, s - back):s + int(0.05 * RATE)]
+        start = int(np.argmax(search > calm + 0.2 * (top - calm)))
+        refined.append(((max(0, s - back) + start) / RATE, float(np.clip((rise - DROP_RISE) / 6 + 0.5, 0.5, 1))))
+    return refined
+
+
 def listen(path, rate: int) -> Sound:
-    """Analyse the karaoke track. A beat is a jump in the bass (below 150 Hz, the band the old
-    pulse followed) to 1.2 times its level over the quarter second before. On 40 s of GIVE ME A
-    REASON that found 52 beats, half a second apart at the median; at 1.35 times it missed every
-    other one (31)."""
+    """Scan a track ahead of the render: the karaoke track when there is one, since its beat is
+    not masked by the vocals."""
+    mix, bass = decode(path), decode(path, "lowpass=f=150")
     hop = RATE / rate
-    bass, mix = decode(path, "lowpass=f=150"), decode(path, "anull")
     count = int(len(mix) / hop)
     edges = (np.arange(count + 1) * hop).astype(int)
-    level = np.array([np.abs(bass[a:b]).mean() for a, b in zip(edges, edges[1:])])
     loud = np.array([np.sqrt((mix[a:b] ** 2).mean()) for a, b in zip(edges, edges[1:])])
-    window, beats, last = max(2, round(0.27 * rate)), [], -1.0
-    for i in range(window, count):
-        if (level[i] > 0.06 and level[i] > 1.2 * level[i - window:i].mean()
-                and level[i] - level[i - 1] > 0.01 and i / rate - last > 0.22):
-            last = i / rate
-            beats.append(last)
     swell, keep = np.zeros(count), np.exp(-1 / (rate * 1.5))
     target = np.clip((loud - 0.05) / 0.35, 0, 1)
     for i in range(count):
         swell[i] = target[0] if i == 0 else swell[i - 1] * keep + target[i] * (1 - keep)
-    return Sound(np.cumsum(swell) / rate, np.array(beats))
+    return Sound(np.cumsum(swell) / rate, find_drops(mix, bass))
 
 
 def palette(pixels: bytes) -> tuple[np.ndarray, list[np.ndarray]]:
@@ -85,6 +129,18 @@ def erf(x: np.ndarray) -> np.ndarray:
     return np.sign(x) * y
 
 
+def burst(drops: list[tuple[float, float]], t: float) -> tuple[float, float]:
+    """How lit the ribbons are at time t (0 to 1), and how far all drops so far have pushed the flow."""
+    lit, push = 0.0, 0.0
+    for at, strength in drops:
+        since = t - at
+        if since < 0:
+            break
+        lit = max(lit, strength * min(since / ATTACK, np.exp(-(since - ATTACK) / FADE)))
+        push += strength * (1 - np.exp(-since / 0.35))
+    return lit, push
+
+
 def frames(width: int, height: int, duration: float, rate: int, colours, sound: Sound):
     """The backdrop at width x height, `rate` frames a second, as planar float GBR frames
     (gbrpf32le), ready to be scaled up to the video's size."""
@@ -102,13 +158,13 @@ def frames(width: int, height: int, duration: float, rate: int, colours, sound: 
     shade = 1 - (1 - np.cos(pi / 5 * r) ** 4) * 1.2
     shade *= 1 - SHADE * np.clip(1 - np.abs(y / height - 0.5) / 0.3, 0, 1)  # the band behind the lyrics
     luma = np.array([0.2126, 0.7152, 0.0722])
-    beats = sound.beats
     for frame in range(ceil(duration * rate)):
         t = frame / rate
-        past = t - beats[beats <= t]
-        lit = 0.0 if not len(past) else min(past.min() / ATTACK, np.exp(-(past.min() - ATTACK) / FADE))
+        # Half a frame early, so the frame nearest a drop is the one that lights up: a picture
+        # that lags the sound is noticed sooner than one that leads it.
+        lit, push = burst(sound.drops, t + 0.5 / rate)
         loudness = sound.loudness[min(frame, len(sound.loudness) - 1)]
-        phase = SPEED * t + DRIVE * loudness + SURGE * (1 - np.exp(-past / 0.18)).sum()
+        phase = SPEED * t + DRIVE * loudness + SURGE * push
         picture = np.broadcast_to(sky[:, None, None], (3, height, width)).copy()
         for n, colour in enumerate(accents):
             turn = u * 5 + phase * (1.3 + 0.4 * n) + 2 * n
