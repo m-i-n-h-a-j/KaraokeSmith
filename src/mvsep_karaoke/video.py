@@ -536,12 +536,14 @@ def feed(command: list[str], frames, cwd: Path) -> None:
         sys.exit(f"ffmpeg failed:\n{log.read_text(encoding='utf-8', errors='replace')[-800:]}")
 
 
-def render(lines: list[Line], karaoke: Path, original: Path, duration: float, target: Path,
+def render(lines: list[Line], karaoke: Path | None, original: Path, duration: float, target: Path,
            layout: Layout, title: str = "", artist: str = "", codec: str = "avc", fps: int = FPS) -> None:
-    """Encode the lyrics over the backdrop as an MKV with two FLAC audio tracks:
-    the karaoke track (default) and the original song."""
+    """Encode the lyrics over the backdrop as an MKV with FLAC audio: the karaoke track (default)
+    and the original song, or with no karaoke track, the original alone. The backdrop follows
+    the karaoke track when there is one."""
     pix_fmt, encoder = CODECS[codec]
     rate = min(BACKDROP_FPS, fps)
+    music = (karaoke or original).resolve()
     with tempfile.TemporaryDirectory() as folder:
         work = Path(folder)
         # A Windows path inside an ffmpeg filter needs layers of escaping, so the subtitle
@@ -552,29 +554,32 @@ def render(lines: list[Line], karaoke: Path, original: Path, duration: float, ta
         pixels = colours(original, title)
         if BACKDROP == "aurora":
             across, down = layout.width // SHRINK, layout.height // SHRINK
-            frames = aurora.frames(across, down, duration, rate, aurora.palette(pixels), aurora.listen(karaoke, rate))
+            frames = aurora.frames(across, down, duration, rate, aurora.palette(pixels), aurora.listen(music, rate))
             inputs = ["-f", "rawvideo", "-pix_fmt", "gbrpf32le", "-s", f"{across}x{down}", "-framerate", str(rate),
-                      "-i", "-", "-i", str(original.resolve()), "-i", str(karaoke.resolve())]
-            graph, sung, sang = f"[0:v]{finish(layout, duration, fps, pix_fmt)}[video]", 2, 1
+                      "-i", "-", "-i", str(original.resolve())]
+            graph, sang = f"[0:v]{finish(layout, duration, fps, pix_fmt)}[video]", 1
         else:
             picture, gain = artwork(pixels)
             (work / "cover.ppm").write_bytes(picture)
             frames = None
             inputs = ["-loop", "1", "-framerate", str(rate), "-t", f"{duration:.3f}", "-i", "cover.ppm",
-                      "-i", str(karaoke.resolve()), "-i", str(original.resolve()),
-                      # The karaoke track again, for the copy: one input feeding both the filter and the
-                      # copy stalls while the encoder holds back frames, and ffmpeg runs out of memory.
-                      "-i", str(karaoke.resolve())]
-            graph, sung, sang = backdrop(layout, duration, gain, rate, fps, pix_fmt), 3, 2
+                      "-i", str(music), "-i", str(original.resolve())]
+            graph, sang = backdrop(layout, duration, gain, rate, fps, pix_fmt), 2
+        # The karaoke track is opened apart from the input the cover backdrop's pulse reads: one input
+        # feeding both the filter and the copy stalls while the encoder holds back frames, and ffmpeg
+        # runs out of memory. It is already the FLAC we want; the original is brought to the same format.
+        if karaoke is not None:
+            inputs += ["-i", str(karaoke.resolve())]
+            audio = ["-map", f"{inputs.count('-i') - 1}:a:0", "-map", f"{sang}:a:0",
+                     "-c:a:0", "copy", "-c:a:1", "flac", "-ar:a:1", "48000", "-sample_fmt:a:1", "s16",
+                     "-metadata:s:a:0", "title=Karaoke", "-metadata:s:a:1", "title=Original",
+                     "-disposition:a:0", "default", "-disposition:a:1", "0"]
+        else:
+            audio = ["-map", f"{sang}:a:0", "-c:a:0", "flac", "-ar:a:0", "48000", "-sample_fmt:a:0", "s16",
+                     "-metadata:s:a:0", "title=Original", "-disposition:a:0", "default"]
         command = ["ffmpeg", "-hide_banner", "-nostats", "-y", *inputs,
-                   "-filter_complex", graph,
-                   "-map", "[video]", "-map", f"{sung}:a:0", "-map", f"{sang}:a:0",
-                   *encoder, "-pix_fmt", pix_fmt,
-                   # The karaoke track is already the FLAC we want; the original is brought to the same format.
-                   "-c:a:0", "copy", "-c:a:1", "flac", "-ar:a:1", "48000", "-sample_fmt:a:1", "s16",
-                   "-metadata:s:a:0", "title=Karaoke", "-metadata:s:a:1", "title=Original",
-                   "-disposition:a:0", "default", "-disposition:a:1", "0",
-                   "-shortest", str(target.resolve())]
+                   "-filter_complex", graph, "-map", "[video]", *audio,
+                   *encoder, "-pix_fmt", pix_fmt, "-shortest", str(target.resolve())]
         if frames is None:
             run(command, cwd=work)
         else:

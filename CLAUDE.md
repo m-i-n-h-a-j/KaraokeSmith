@@ -15,10 +15,11 @@ uv run karaoke audio/song.opus --video vertical   # audio/song_karaoke_vertical.
 uv run karaoke audio/song.opus --video both
 uv run karaoke audio/song.opus --video --codec ffv1 --fps 60   # lossless 10-bit FFV1 at 60 fps
 uv run karaoke audio/song.opus --sync --video     # time the lyrics by hand in the browser first
+uv run karaoke audio/song.opus --video --skip-separation   # no MVSEP: audio/song_lyrics.mkv with the original song
 uv add <package>                                  # add a dependency (updates pyproject.toml and uv.lock)
 ```
 
-The CLI is deliberately minimal: one positional input, `--video [horizontal|vertical|both]`, `--sync`, and for the video `--codec avc|ffv1` (default `avc`) and `--fps` (default 24), the last two added at the user's request. Because `--video` takes an optional value, the song must come before it. Model, formats, loudness targets, colours and the settings of each encoder are module constants, not flags. The user's way to customise lyrics and timing is the `.lrc`/`.txt` file next to the song, not options.
+The CLI is deliberately minimal: one positional input, `--video [horizontal|vertical|both]`, `--sync`, `--skip-separation`, and for the video `--codec avc|ffv1` (default `avc`) and `--fps` (default 24). The user asked for the last three. `--skip-separation` never contacts MVSEP. The video uses `<name>_karaoke.flac` if it already exists. Otherwise it carries only the original song and is saved as `<name>_lyrics.mkv`, so it never replaces a karaoke video, and the backdrop follows the original. Words that still need timing come from transcribing the whole song. On 40 s of GIVE ME A REASON with a line-timed `.lrc`, only 16 of 85 words matched that way; the rest were spread within their lines. Without `--video` or `--sync` the flag is an error, because there is nothing left to do. Because `--video` takes an optional value, the song must come before it. Model, formats, loudness targets, colours and the settings of each encoder are module constants, not flags. The user's way to customise lyrics and timing is the `.lrc`/`.txt` file next to the song, not options.
 
 The API token is read from `MVSEP_API_TOKEN`, falling back to a `.env` file in the current working directory, so run from the repo root or export the variable. `ffmpeg` and `ffprobe` must be on PATH.
 

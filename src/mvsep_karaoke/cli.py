@@ -16,6 +16,11 @@ one there, otherwise from LRCLIB, looked up by the song's tags. --sync opens an 
 the browser to type in lyrics and tap their timing along with the song; it saves <name>.lrc.
 Run again after changing the .lrc and only the video is rendered again.
 
+--skip-separation leaves MVSEP out. The video then uses <name>_karaoke.flac if it is already
+there, and otherwise carries only the original song and is saved as <name>_lyrics.mkv. Words
+that still need timing are found by transcribing the whole song instead of the lead vocals,
+which is less accurate.
+
 The API token is read from MVSEP_API_TOKEN, or from a .env file in the current directory.
 """
 import argparse
@@ -86,9 +91,14 @@ def main() -> None:
                         help=f"video frame rate (default {video.FPS})")
     parser.add_argument("--sync", action="store_true",
                         help="first open the lyrics editor in the browser, to type in lyrics and tap their timing by hand")
+    parser.add_argument("--skip-separation", action="store_true",
+                        help="do not send the song to MVSEP: the video uses an existing karaoke track or "
+                             "else the original song, and words are timed from the whole song")
     args = parser.parse_args()
     if args.fps <= 0:
         parser.error("--fps must be a positive number")
+    if args.skip_separation and not (args.video or args.sync):
+        parser.error("--skip-separation leaves nothing to do without --video or --sync")
     song = args.input
 
     if not song.is_file():
@@ -113,11 +123,17 @@ def main() -> None:
     untimed = args.video and (not drafts or any(draft.words is None for draft in drafts))
 
     with tempfile.TemporaryDirectory() as folder:
-        vocals = Path(folder) / "vocals.flac" if untimed else None
-        if vocals is not None or not karaoke.exists():
-            separate(song, karaoke, vocals)
+        if args.skip_separation:
+            vocals = song if untimed else None  # the recognizer hears the whole mix
+            if args.video:
+                print(f"using existing {karaoke}" if karaoke.exists()
+                      else "separation skipped: the video gets the original song only")
         else:
-            print(f"using existing {karaoke}")
+            vocals = Path(folder) / "vocals.flac" if untimed else None
+            if vocals is not None or not karaoke.exists():
+                separate(song, karaoke, vocals)
+            else:
+                print(f"using existing {karaoke}")
         if not args.video:
             return
         if vocals is not None:
@@ -137,9 +153,12 @@ def main() -> None:
             print(f"saved {lrc}; edit it and run again to fix lyrics or timing")
         else:
             lines = lyrics.align(drafts, [], duration)
+    # Without a karaoke track it is a lyrics video, named so it never replaces a karaoke one.
+    backing = karaoke if karaoke.exists() else None
+    kind = "karaoke" if backing else "lyrics"
     for shape in ("horizontal", "vertical") if args.video == "both" else (args.video,):
         suffix = "" if shape == "horizontal" else f"_{shape}"
-        video.render(lines, karaoke, song, duration, song.with_name(f"{song.stem}_karaoke{suffix}.mkv"),
+        video.render(lines, backing, song, duration, song.with_name(f"{song.stem}_{kind}{suffix}.mkv"),
                      video.LAYOUTS[shape], title, tags.get("artist", ""), args.codec, args.fps)
 
 
