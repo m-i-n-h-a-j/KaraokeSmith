@@ -127,8 +127,14 @@ def main() -> None:
         if args.skip_separation:
             vocals = song if untimed else None  # the recognizer hears the whole mix
             if args.video:
-                print(f"using existing {karaoke}" if karaoke.exists()
-                      else "separation skipped: the video gets the original song only")
+                if karaoke.exists():
+                    print(f"separation skipped; the video uses the karaoke track already there, {karaoke.name}")
+                else:
+                    print(f"separation skipped; no karaoke track, so the video plays the original song "
+                          f"and is saved as {song.stem}_lyrics.mkv")
+            if vocals is not None:
+                print("lyrics: word timings will come from transcribing the whole song, "
+                      "which is less accurate than separated vocals")
         else:
             vocals = Path(folder) / "vocals.flac" if untimed else None
             if vocals is not None or not karaoke.exists():

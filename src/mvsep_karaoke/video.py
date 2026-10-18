@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import zlib
 from dataclasses import dataclass
 from math import ceil, hypot
@@ -16,7 +17,8 @@ import uharfbuzz as hb
 
 from . import aurora
 from .lyrics import Line
-from .media import cover, run
+from .media import cover
+from .progress import Progress
 
 FPS = 24  # the default; --fps sets another
 # Video encoders by the name --codec takes: the pixel format the picture is made in, and the
@@ -518,25 +520,41 @@ def backdrop(layout: Layout, duration: float, gain: float, rate: int, fps: int, 
     )
 
 
-def feed(command: list[str], frames, cwd: Path) -> None:
-    """Run ffmpeg with the backdrop's frames written to its standard input. Its messages go to a
+def encode(command: list[str], cwd: Path, duration: float, frames=None) -> None:
+    """Run the video's ffmpeg command, writing the backdrop's frames to its standard input if there
+    are any, and show how far it has got from its -progress reports. Its other messages go to a
     file: a stderr pipe that nobody reads fills up and stalls ffmpeg while frames still come."""
-    log = cwd / "ffmpeg.log"
+    log, meter = cwd / "ffmpeg.log", Progress(f"rendering {Path(command[-1]).name}", duration)
     with open(log, "wb") as messages:
-        process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.PIPE, stderr=messages)
-        try:
-            for frame in frames:
-                process.stdin.write(frame.tobytes())
-        except OSError:
-            pass  # ffmpeg stopped reading (a broken pipe); its log says whether that was an error
-        finally:
+        process = subprocess.Popen([command[0], "-progress", "pipe:1", *command[1:]], cwd=cwd,
+                                   stdin=subprocess.PIPE if frames is not None else subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=messages)
+
+        def watch() -> None:
+            for report in process.stdout:
+                key, _, value = report.decode("ascii", "replace").strip().partition("=")
+                if key == "out_time_us" and value.isdigit():  # "N/A" until the first frame is out
+                    meter.update(int(value) / 1e6)
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        if frames is not None:
             try:
-                process.stdin.close()
+                for frame in frames:
+                    process.stdin.write(frame.tobytes())
             except OSError:
-                pass
+                pass  # ffmpeg stopped reading (a broken pipe); its log says whether that was an error
+            finally:
+                try:
+                    process.stdin.close()
+                except OSError:
+                    pass
         code = process.wait()
+        watcher.join()
     if code != 0:
+        meter.close(f"rendering failed after {meter.elapsed()}")
         sys.exit(f"ffmpeg failed:\n{log.read_text(encoding='utf-8', errors='replace')[-800:]}")
+    meter.close(f"rendered in {meter.elapsed()}")
 
 
 def render(lines: list[Line], karaoke: Path | None, original: Path, duration: float, target: Path,
@@ -557,7 +575,9 @@ def render(lines: list[Line], karaoke: Path | None, original: Path, duration: fl
         pixels = colours(original, title)
         if BACKDROP == "aurora":
             across, down = layout.width // SHRINK, layout.height // SHRINK
-            frames = aurora.frames(across, down, duration, rate, aurora.palette(pixels), aurora.listen(music, rate))
+            sound = aurora.listen(music, rate)
+            print(f"backdrop: aurora, reacting to {len(sound.beats)} beats found in {music.name}", flush=True)
+            frames = aurora.frames(across, down, duration, rate, aurora.palette(pixels), sound)
             inputs = ["-f", "rawvideo", "-pix_fmt", "gbrpf32le", "-s", f"{across}x{down}", "-framerate", str(rate),
                       "-i", "-", "-i", str(original.resolve())]
             graph, sang = f"[0:v]{finish(layout, duration, fps, pix_fmt)}[video]", 1
@@ -583,8 +603,5 @@ def render(lines: list[Line], karaoke: Path | None, original: Path, duration: fl
         command = ["ffmpeg", "-hide_banner", "-nostats", "-y", *inputs,
                    "-filter_complex", graph, "-map", "[video]", *audio,
                    *encoder, "-pix_fmt", pix_fmt, "-shortest", str(target.resolve())]
-        if frames is None:
-            run(command, cwd=work)
-        else:
-            feed(command, frames, work)
+        encode(command, work, duration, frames)
     print(f"saved {target} ({target.stat().st_size / 1e6:.1f} MB)")
