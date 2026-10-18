@@ -90,6 +90,7 @@ There is no browser test in the repo. The page was checked by driving it with Pl
 - faster-whisper 1.2.1 cannot decode files with the PyAV it installs (`open() got an unexpected keyword argument 'metadata_errors'`), so `transcribe.py` decodes with ffmpeg and passes samples.
 - faster-whisper `small` missed the first 28 s of vocals that `turbo` caught; `turbo` on CPU takes about 0.4x real time. GPU needs cuBLAS/cuDNN DLLs that are not installed (`Library cublas64_12.dll is not found`), so it runs on CPU.
 - ffmpeg's `ass` filter needs heavy escaping for Windows paths, so `render` writes `lyrics.ass` to a temp folder and runs ffmpeg with that folder as cwd.
+- numpy (through `aurora`) and `uharfbuzz` are imported only when a video renders (`render`, `shaper` in `video.py`), not when the CLI starts. Neither has an Android wheel, and the `termux-support` branch leaves numpy out on Android; imported at the top, they stopped even `--sync` from starting there. Without them `render` exits with a message naming the missing one.
 
 ## Post-processing
 

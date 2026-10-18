@@ -10,12 +10,10 @@ import tempfile
 import threading
 import zlib
 from dataclasses import dataclass
+from functools import cache
 from math import ceil, hypot
 from pathlib import Path
 
-import uharfbuzz as hb
-
-from . import aurora
 from .lyrics import Line
 from .media import cover
 from .progress import Progress
@@ -109,8 +107,6 @@ class Ruler:
     libass shapes it, plus the letter spacing after every character. libass kerns only when the
     script says Kerning: yes and the letter spacing is 0; with TRACKING at 2% it does not kern
     (measured: "AV To Wa" 391 px wide, against 370 kerned)."""
-    face = hb.Face(hb.Blob.from_file_path(str(FONT_FILE)))
-    font = hb.Font(face)
     features = {} if TRACKING == 0 else {"kern": False}
 
     def __init__(self, size: float):
@@ -119,12 +115,23 @@ class Ruler:
     def width(self, text: str) -> float:
         if not text:
             return 0.0  # HarfBuzz leaves an empty buffer without positions
+        hb, face, font = shaper()
         buffer = hb.Buffer()
         buffer.add_str(text)
         buffer.guess_segment_properties()
-        hb.shape(self.font, buffer, self.features)
+        hb.shape(font, buffer, self.features)
         advance = sum(position.x_advance for position in buffer.glyph_positions)
-        return advance * self.size / self.face.upem + self.size * TRACKING * len(text)
+        return advance * self.size / face.upem + self.size * TRACKING * len(text)
+
+
+@cache
+def shaper():
+    """HarfBuzz with FONT loaded, on first use like numpy in render: neither package has an
+    Android wheel, and on Termux the rest of the CLI runs without them."""
+    import uharfbuzz as hb
+
+    face = hb.Face(hb.Blob.from_file_path(str(FONT_FILE)))
+    return hb, face, hb.Font(face)
 
 
 def header(layout: Layout) -> str:
@@ -562,6 +569,11 @@ def render(lines: list[Line], karaoke: Path | None, original: Path, duration: fl
     """Encode the lyrics over the backdrop as an MKV with FLAC audio: the karaoke track (default)
     and the original song, or with no karaoke track, the original alone. The backdrop follows
     the karaoke track when there is one."""
+    try:
+        from . import aurora  # draws with numpy
+        shaper()
+    except ImportError as missing:
+        sys.exit(f"The video needs numpy and uharfbuzz, and {missing.name} is not installed.")
     pix_fmt, encoder = CODECS[codec]
     rate = min(BACKDROP_FPS, fps)
     music = (karaoke or original).resolve()
