@@ -1,15 +1,20 @@
 // The "Edit lyrics" box: changing the text while the rows that stay keep their timing.
+import { draw } from "./column";
+import { $, audio, type Line, lineEnd, state, textOf } from "./state";
+import { remember, spread, todo } from "./timing";
 
-function openEditor() {
-  $("text").value = lines.map(textOf).join("\n");
+const box = () => $<HTMLTextAreaElement>("text");
+
+export function openEditor() {
+  box().value = state.lines.map(textOf).join("\n");
   document.body.classList.add("editing");
   audio.pause();
-  $("text").focus();
+  box().focus();
 }
 
 // A row whose text changed. Words tapped by hand keep their times if there are still as many;
 // otherwise the line keeps its place in the song and its words are estimated again.
-function reword(old, text) {
+function reword(old: Line | null, text: string): Line {
   const texts = text.split(" ");
   if (old?.byWord && old.words.length === texts.length) {
     return {
@@ -31,12 +36,12 @@ function reword(old, text) {
   };
 }
 
-function applyLyrics() {
-  const texts = $("text")
+export function applyLyrics() {
+  const texts = box()
     .value.split("\n")
     .map((row) => row.trim().replace(/\s+/g, " "))
     .filter(Boolean);
-  const old = lines,
+  const old = state.lines,
     was = old.map(textOf),
     n = was.length,
     m = texts.length;
@@ -51,14 +56,14 @@ function applyLyrics() {
           : Math.max(common[i + 1][j], common[i][j + 1]);
     }
   }
-  const kept = [];
+  const kept: [number, number][] = [];
   for (let i = 0, j = 0; i < n && j < m;) {
     if (was[i] === texts[j]) kept.push([i++, j++]);
     else if (common[i + 1][j] >= common[i][j + 1]) i++;
     else j++;
   }
   kept.push([n, m]);
-  lines = [];
+  const lines: Line[] = [];
   let i = 0,
     j = 0;
   for (const [keptOld, keptNew] of kept) {
@@ -70,11 +75,12 @@ function applyLyrics() {
     i = keptOld + 1;
     j = keptNew + 1;
   }
+  state.lines = lines;
   lines.forEach((line, index) => {
     if (line.start != null && line.words[0].start == null) spread(index);
   });
-  cursor = todo();
-  wordCursor = 0;
+  state.cursor = todo();
+  state.wordCursor = 0;
   document.body.classList.remove("editing");
   draw();
 }

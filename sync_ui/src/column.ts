@@ -1,8 +1,15 @@
 // The lyric column: one row per line, filling gold as the song plays.
+import { $, audio, clock, done, state } from "./state";
+import { forget, sketch } from "./timeline";
+import { select } from "./timing";
+
+let rows: { row: HTMLDivElement; words: HTMLSpanElement[] }[] = []; // the column's elements
+export let marked: number | null = null; // row that carries the highlight
 
 // Rebuild the lyric column. Cheap enough to do after every change.
-function draw() {
-  cache = null;
+export function draw() {
+  const { lines, step, cursor, wordCursor } = state;
+  forget();
   marked = null;
   rows = lines.map((line, index) => {
     const row = document.createElement("div");
@@ -40,9 +47,9 @@ function draw() {
   paint();
 }
 
-function lineAt(t) {
+function lineAt(t: number) {
   let found = -1;
-  lines.forEach((line, index) => {
+  state.lines.forEach((line, index) => {
     if (line.start != null && line.start <= t) found = index;
   });
   return found;
@@ -50,45 +57,53 @@ function lineAt(t) {
 
 // Show the fill as the renderer will: words turn gold as the playhead passes them. The marked
 // row is the one to tap next, or in the review step the one being sung.
-function paint() {
-  if (closed) return;
+export function paint() {
+  const { lines, step, cursor, duration } = state;
+  if (state.closed) return;
   const t = audio.currentTime;
   $("clock").textContent = `${clock(t)} / ${clock(duration)}`;
-  if (document.activeElement !== $("seek")) $("seek").value = t;
+  const seek = $<HTMLInputElement>("seek");
+  if (document.activeElement !== seek) seek.value = String(t);
   const want =
     step === "review" ? lineAt(t + 0.3) : cursor < lines.length ? cursor : -1;
   if (want !== marked) {
-    rows[marked]?.row.classList.remove("target");
+    if (marked != null) rows[marked]?.row.classList.remove("target");
     rows[want]?.row.classList.add("target");
-    (
-      rows[want] ?? rows[step === "review" ? 0 : rows.length - 1]
-    )?.row.scrollIntoView({ block: "center" });
+    // Not scrollIntoView: that also scrolls the page itself when it does not fit the window,
+    // which on a phone pushed the header off the screen.
+    const row = (rows[want] ?? rows[step === "review" ? 0 : rows.length - 1])
+        ?.row,
+      column = $("lines");
+    if (row)
+      column.scrollTo({
+        top: row.offsetTop + row.offsetHeight / 2 - column.clientHeight / 2,
+      });
     marked = want;
   }
   lines.forEach((line, index) =>
     line.words.forEach((word, k) => {
-      const span = rows[index]?.words[k],
-        timed = word.start != null;
+      const span = rows[index]?.words[k];
       if (!span) return;
-      const active = timed && t >= word.start && t < word.end;
-      span.classList.toggle("sung", timed && t >= word.end);
+      const { start, end } = word;
+      const active = start != null && t >= start && t < end!;
+      span.classList.toggle("sung", start != null && t >= end!);
       span.classList.toggle("active", active);
       if (active)
         span.style.setProperty(
           "--fill",
-          `${(100 * (t - word.start)) / (word.end - word.start)}%`,
+          `${(100 * (t - start)) / (end! - start)}%`,
         );
     }),
   );
   sketch();
 }
 
-function refresh() {
-  cache = null;
+export function refresh() {
+  forget();
   paint();
 }
 
-function frame() {
+export function frame() {
   if (!audio.paused) paint();
   requestAnimationFrame(frame);
 }
