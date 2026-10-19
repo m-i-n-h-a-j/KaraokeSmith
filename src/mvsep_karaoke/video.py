@@ -587,7 +587,7 @@ def render(lines: list[Line], karaoke: Path | None, original: Path, duration: fl
         pixels = colours(original, title)
         if BACKDROP == "aurora":
             across, down = layout.width // SHRINK, layout.height // SHRINK
-            sound = aurora.listen(music, rate)
+            sound = aurora.listen(music, rate, lines)
             moments = ", ".join(f"{int(at // 60)}:{at % 60:04.1f}" for at, _ in sound.drops)
             print(f"backdrop: aurora, bursting at {len(sound.drops)} beat drops found in {music.name}"
                   + (f": {moments}" if moments else "; the ribbons only flow"), flush=True)

@@ -1,6 +1,8 @@
 """The aurora backdrop: ribbons of the cover's colours flowing across a dark sky, drawn here frame
-by frame and piped into ffmpeg. The flow runs faster in loud passages, and the ribbons burst at
-each beat drop, where the beat comes back hard after a quieter stretch; the sky never brightens."""
+by frame and piped into ffmpeg. The flow runs as fast as the words come, so a rapper's fast verse
+races and a slow hook drifts, and where there are few words the loudness keeps it moving. The
+ribbons burst at each beat drop, where the beat comes back hard after a quieter stretch; the sky
+never brightens."""
 import colorsys
 import subprocess
 from dataclasses import dataclass
@@ -8,8 +10,13 @@ from math import ceil, pi, sqrt
 
 import numpy as np
 
+from .lyrics import Line
+
 SPEED = 0.08  # how fast the ribbons flow in silence
-DRIVE = 0.35  # how much loudness speeds the flow up
+DRIVE = 0.25  # how much loudness speeds the flow up, where the words come slower than that
+PACE, PACE_CURVE = 0.0095, 1.5  # the words speed the flow up by PACE x (letters a second) ** PACE_CURVE:
+# with the curve, twice the letters is 2.8 times the speed, so a fast verse runs away from a normal one
+PACE_BLUR = 1.0  # seconds: the spread of the bell curve the words' pace is averaged over
 SURGE = 0.6  # how far the flow lurches forward at a drop
 SWELL = 0.6  # how much wider the ribbons get at a drop
 LIGHT = 1.0  # how much brighter the ribbons get at a drop
@@ -24,10 +31,9 @@ DROP_GAP = 8.0  # seconds between drops at the least
 
 @dataclass
 class Sound:
-    """What the backdrop follows: for each backdrop frame, the loudness of the whole mix (slowly
-    smoothed, 0 to 1) added up over the song so far, in seconds; and each beat drop's time and
-    strength (0.5 to 1)."""
-    loudness: np.ndarray
+    """What the backdrop follows: for each backdrop frame, how far the ribbons have flowed by then
+    on top of SPEED; and each beat drop's time and strength (0.5 to 1)."""
+    flow: np.ndarray
     drops: list[tuple[float, float]]
 
 
@@ -86,9 +92,25 @@ def find_drops(mix: np.ndarray, bass: np.ndarray) -> list[tuple[float, float]]:
     return refined
 
 
-def listen(path, rate: int) -> Sound:
+def pace(lines: list[Line], count: int, rate: int) -> np.ndarray:
+    """How fast the words come at each backdrop frame, in letters a second: each word's letters
+    counted at its start and spread over a bell curve PACE_BLUR seconds wide either side, so the
+    flow picks up just ahead of a fast verse and eases off after it instead of stopping at every
+    breath. Letters, not words, because a fast verse packs in long words as well as more of them."""
+    letters = np.zeros(count)
+    for line in lines:
+        for word in line:
+            if 0 <= word.start * rate < count:
+                letters[int(word.start * rate)] += sum(c.isalnum() for c in word.text)
+    reach = int(3 * PACE_BLUR * rate)
+    bell = np.exp(-0.5 * (np.arange(-reach, reach + 1) / (PACE_BLUR * rate)) ** 2)
+    return np.convolve(np.pad(letters, reach), bell / bell.sum(), mode="valid") * rate
+
+
+def listen(path, rate: int, lines: list[Line]) -> Sound:
     """Scan a track ahead of the render: the karaoke track when there is one, since its beat is
-    not masked by the vocals."""
+    not masked by the vocals. The flow runs at whichever is faster, the pace of the lyrics or the
+    drive of the loudness."""
     mix, bass = decode(path), decode(path, "lowpass=f=150")
     hop = RATE / rate
     count = int(len(mix) / hop)
@@ -98,7 +120,8 @@ def listen(path, rate: int) -> Sound:
     target = np.clip((loud - 0.05) / 0.35, 0, 1)
     for i in range(count):
         swell[i] = target[0] if i == 0 else swell[i - 1] * keep + target[i] * (1 - keep)
-    return Sound(np.cumsum(swell) / rate, find_drops(mix, bass))
+    speed = np.maximum(DRIVE * swell, PACE * pace(lines, count, rate) ** PACE_CURVE)
+    return Sound(np.cumsum(speed) / rate, find_drops(mix, bass))
 
 
 def palette(pixels: bytes) -> tuple[np.ndarray, list[np.ndarray]]:
@@ -163,8 +186,7 @@ def frames(width: int, height: int, duration: float, rate: int, colours, sound: 
         # Half a frame early, so the frame nearest a drop is the one that lights up: a picture
         # that lags the sound is noticed sooner than one that leads it.
         lit, push = burst(sound.drops, t + 0.5 / rate)
-        loudness = sound.loudness[min(frame, len(sound.loudness) - 1)]
-        phase = SPEED * t + DRIVE * loudness + SURGE * push
+        phase = SPEED * t + sound.flow[min(frame, len(sound.flow) - 1)] + SURGE * push
         picture = np.broadcast_to(sky[:, None, None], (3, height, width)).copy()
         for n, colour in enumerate(accents):
             turn = u * 5 + phase * (1.3 + 0.4 * n) + 2 * n
